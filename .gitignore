@@ -1,0 +1,10 @@
+mobileapp/android/local.properties
+mobileapp/build/
+mobileapp/.dart_tool/
+mobileapp/android/build/
+mobileapp/android/app/C_/
+mobileapp/android/.gradle/
+*.iml.DS_Store
+.env
+.vscode/
+CLAUDE.md

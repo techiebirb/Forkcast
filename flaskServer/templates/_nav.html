@@ -1,0 +1,6 @@
+<nav class="topbar">
+    <span class="topbar-user">Signed in as <strong>{{ session.get("username") }}</strong></span>
+    <form method="post" action="{{ url_for('api_logout') }}">
+        <button class="secondary" type="submit">Log out</button>
+    </form>
+</nav>

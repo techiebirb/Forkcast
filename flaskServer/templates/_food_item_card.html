@@ -1,0 +1,15 @@
+<article class="food-card">
+    <h3>{{ item.name }}</h3>
+    <p class="hint">{{ item.quantity }}</p>
+    {% if item.ingredients %}
+    <p class="ingredients">{{ item.ingredients | join(", ") }}</p>
+    {% endif %}
+    <dl class="macro-grid">
+        <div><dt>Calories</dt><dd>{{ item.calories }}</dd></div>
+        <div><dt>Proteins</dt><dd>{{ item.proteins }} g</dd></div>
+        <div><dt>Carbs</dt><dd>{{ item.carbs }} g</dd></div>
+        <div><dt>Fat</dt><dd>{{ item.fat }} g</dd></div>
+        <div><dt>Fiber</dt><dd>{{ item.fiber }} g</dd></div>
+        <div><dt>Sugar</dt><dd>{{ item.sugar }} g</dd></div>
+    </dl>
+</article>

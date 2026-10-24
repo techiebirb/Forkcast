@@ -1,0 +1,78 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Search Restaurants</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+    {% include "_nav.html" %}
+    <main class="page">
+        <h1>Search restaurants</h1>
+        <p class="lede">Local places that might fit your goals. Open a restaurant to see menu items and macros.</p>
+
+        {% if error %}
+        <div class="banner error">{{ error }}</div>
+        {% endif %}
+
+        <section class="card">
+            <h2>Saved preferences</h2>
+            <dl class="prefs-list">
+                <dt>Calories</dt><dd>{{ preferences.calories if preferences.calories is not none else "Any" }}</dd>
+                <dt>Proteins</dt><dd>{{ preferences.proteins if preferences.proteins is not none else "Any" }} g</dd>
+                <dt>Carbs</dt><dd>{{ preferences.carbs if preferences.carbs is not none else "Any" }} g</dd>
+                <dt>Fat</dt><dd>{{ preferences.fat if preferences.fat is not none else "Any" }} g</dd>
+                <dt>Fiber</dt><dd>{{ preferences.fiber if preferences.fiber is not none else "Any" }} g</dd>
+                <dt>Sugar</dt><dd>{{ preferences.sugar if preferences.sugar is not none else "Any" }} g</dd>
+                <dt>Halal</dt><dd>{{ "Yes" if preferences.halal else "No" }}</dd>
+                <dt>Kosher</dt><dd>{{ "Yes" if preferences.kosher else "No" }}</dd>
+                <dt>Allergies</dt><dd>{{ preferences.allergies | join(", ") or "None" }}</dd>
+                <dt>Location</dt>
+                <dd>
+                    {% if preferences.latitude and preferences.longitude %}
+                    {{ preferences.latitude }}, {{ preferences.longitude }}
+                    {% else %}
+                    Not provided
+                    {% endif %}
+                </dd>
+            </dl>
+        </section>
+
+        {% if restaurants %}
+            {% for restaurant in restaurants %}
+            <section class="card restaurant-card">
+                <h2>{{ restaurant.name }}</h2>
+                <p class="hint">
+                    {% if restaurant.cuisine %}{{ restaurant.cuisine }} · {% endif %}
+                    {{ restaurant.address or "Address unavailable" }}
+                </p>
+                <p>{{ restaurant.why_it_matches }}</p>
+                {% if restaurant.possible_ideas %}
+                <p class="hint">What might work: {{ restaurant.possible_ideas }}</p>
+                {% endif %}
+                <form method="post" action="{{ url_for('check_restaurant') }}">
+                    <input type="hidden" name="restaurant_name" value="{{ restaurant.name }}">
+                    <div class="actions">
+                        <button class="primary" type="submit">Check this restaurant</button>
+                    </div>
+                </form>
+            </section>
+            {% endfor %}
+        {% else %}
+        <section class="card">
+            <div class="skeleton-list">
+                <div class="skeleton-row"></div>
+                <div class="skeleton-row"></div>
+                <div class="skeleton-row"></div>
+            </div>
+            <p class="hint">No restaurant results yet. Submit Search Restaurants from the home form.</p>
+        </section>
+        {% endif %}
+
+        <a href="{{ url_for('home') }}">Back to preferences</a>
+    </main>
+    {% include "_gemini_loader.html" %}
+</body>
+</html>

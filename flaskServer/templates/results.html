@@ -1,0 +1,22 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Results</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+    <main class="page">
+        <h1>Your response</h1>
+        <p>{{ response }}</p>
+        {% if preferences %}
+        <section class="card">
+            <h2>Applied preferences</h2>
+            <p class="prefs-preview">{{ preferences }}</p>
+        </section>
+        {% endif %}
+        <a href="/">Generate again</a>
+    </main>
+</body>
+</html>
