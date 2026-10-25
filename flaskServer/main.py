@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Any, List, Mapping, Optional
 from urllib.parse import quote_plus, urlparse
 
+import certifi
 import requests
 from dotenv import load_dotenv
 from flask import Flask, g, jsonify, redirect, render_template, request, session, url_for
@@ -221,7 +222,11 @@ def get_users_collection() -> Collection:
     if not MONGO_URI:
         raise RuntimeError("MONGO_URI is not configured.")
     if mongo_client is None:
-        mongo_client = MongoClient(MONGO_URI, serverSelectionTimeoutMS=5000)
+        mongo_client = MongoClient(
+            MONGO_URI,
+            serverSelectionTimeoutMS=10000,
+            tlsCAFile=certifi.where(),
+        )
     collection = mongo_client[os.environ.get("MONGO_DB_NAME", "nutrition_app")]["users"]
     if not _index_ready:
         collection.create_index("username", unique=True)
