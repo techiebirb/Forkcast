@@ -20,6 +20,19 @@ class CheckScreen extends StatelessWidget {
     return RestaurantRecommendation(name: cleaned);
   }
 
+  Future<void> _guarded(
+    BuildContext context,
+    Future<void> Function() action,
+  ) async {
+    try {
+      await action();
+    } catch (error) {
+      if (context.mounted) {
+        showApiError(context, error);
+      }
+    }
+  }
+
   Future<void> _openLink(BuildContext context, String url) async {
     final uri = Uri.tryParse(url);
     if (uri == null) {
@@ -50,11 +63,32 @@ class CheckScreen extends StatelessWidget {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Text(
-                    prefs.restaurantName.isEmpty
-                        ? 'No restaurant selected'
-                        : prefs.restaurantName,
-                    style: Theme.of(context).textTheme.titleLarge,
+                  Row(
+                    children: [
+                      Expanded(
+                        child: Text(
+                          prefs.restaurantName.isEmpty
+                              ? 'No restaurant selected'
+                              : prefs.restaurantName,
+                          style: Theme.of(context).textTheme.titleLarge,
+                        ),
+                      ),
+                      if (active.name.isNotEmpty)
+                        IconButton(
+                          tooltip: session.isFavoriteRestaurant(active.name)
+                              ? 'Remove from favorites'
+                              : 'Add to favorites',
+                          onPressed: () => _guarded(
+                            context,
+                            () => session.toggleFavoriteRestaurant(active),
+                          ),
+                          icon: Icon(
+                            session.isFavoriteRestaurant(active.name)
+                                ? Icons.star
+                                : Icons.star_border,
+                          ),
+                        ),
+                    ],
                   ),
                   if (active.address.isNotEmpty) ...[
                     const SizedBox(height: 4),
@@ -139,7 +173,16 @@ class CheckScreen extends StatelessWidget {
               ),
             )
           else
-            ...items.map((item) => _FoodCard(item: item)),
+            ...items.map(
+              (item) => _FoodCard(
+                item: item,
+                favorite: session.isFavoriteMeal(active.name, item.name),
+                onToggleFavorite: () => _guarded(
+                  context,
+                  () => session.toggleFavoriteMeal(active, item),
+                ),
+              ),
+            ),
         ],
       ),
     );
@@ -170,9 +213,15 @@ class _PrefRow extends StatelessWidget {
 }
 
 class _FoodCard extends StatelessWidget {
-  const _FoodCard({required this.item});
+  const _FoodCard({
+    required this.item,
+    required this.favorite,
+    required this.onToggleFavorite,
+  });
 
   final FoodItem item;
+  final bool favorite;
+  final VoidCallback onToggleFavorite;
 
   @override
   Widget build(BuildContext context) {
@@ -183,7 +232,21 @@ class _FoodCard extends StatelessWidget {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text(item.name, style: Theme.of(context).textTheme.titleMedium),
+            Row(
+              children: [
+                Expanded(
+                  child: Text(
+                    item.name,
+                    style: Theme.of(context).textTheme.titleMedium,
+                  ),
+                ),
+                IconButton(
+                  tooltip: favorite ? 'Remove from favorites' : 'Save this meal',
+                  onPressed: onToggleFavorite,
+                  icon: Icon(favorite ? Icons.bookmark : Icons.bookmark_border),
+                ),
+              ],
+            ),
             Text(item.quantity, style: Theme.of(context).textTheme.bodySmall),
             if (item.ingredients.isNotEmpty) ...[
               const SizedBox(height: 6),

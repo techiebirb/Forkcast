@@ -22,11 +22,13 @@ class HomePayload {
     required this.username,
     required this.preferences,
     required this.restaurants,
+    required this.saved,
   });
 
   final String? username;
   final UserPreferences preferences;
   final List<RestaurantRecommendation> restaurants;
+  final SavedData saved;
 }
 
 class SearchPayload {
@@ -120,7 +122,7 @@ class ApiClient {
         error.type == DioExceptionType.connectionTimeout) {
       throw ApiException(
         isProduction
-            ? "Can't reach Menu Match right now. Check your connection and try again."
+            ? "Can't reach Forkcast right now. Check your connection and try again."
             : 'Could not reach the server at $apiBaseUrl. '
                 'Is Flask running, and did you use the emulator host URL?',
       );
@@ -198,7 +200,54 @@ class ApiClient {
       username: data['username']?.toString(),
       preferences: UserPreferences.fromJson(_asMap(data['preferences'])),
       restaurants: _restaurants(data['restaurants']),
+      saved: SavedData.fromJson(_asMap(data['saved'])),
     );
+  }
+
+  Future<SavedData> getSaved() async {
+    final response = await _get('/api/saved');
+    _throwIfError(response);
+    return SavedData.fromJson(_asMap(response.data));
+  }
+
+  Future<SavedData> setFavoriteRestaurant(
+    RestaurantRecommendation restaurant, {
+    required bool favorite,
+  }) async {
+    final response = await _post(
+      '/api/favorites/restaurants',
+      data: {
+        'action': favorite ? 'add' : 'remove',
+        'restaurant': restaurant.toJson(),
+      },
+    );
+    _throwIfError(response);
+    return SavedData.fromJson(_asMap(response.data));
+  }
+
+  Future<SavedData> setFavoriteMeal(
+    String restaurantName,
+    String restaurantAddress,
+    FoodItem item, {
+    required bool favorite,
+  }) async {
+    final response = await _post(
+      '/api/favorites/meals',
+      data: {
+        'action': favorite ? 'add' : 'remove',
+        'restaurant_name': restaurantName,
+        'restaurant_address': restaurantAddress,
+        'item': item.toJson(),
+      },
+    );
+    _throwIfError(response);
+    return SavedData.fromJson(_asMap(response.data));
+  }
+
+  Future<SavedData> clearHistory() async {
+    final response = await _post('/api/history/clear');
+    _throwIfError(response);
+    return SavedData.fromJson(_asMap(response.data));
   }
 
   Future<SearchPayload> searchRestaurants(UserPreferences preferences) async {

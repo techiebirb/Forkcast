@@ -1,9 +1,10 @@
 import json
 import logging
+import math
 import os
-from datetime import timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Any, List, Mapping, Optional
+from typing import Any, List, Literal, Mapping, Optional
 from urllib.parse import quote_plus, urlparse
 
 import certifi
@@ -51,6 +52,41 @@ class FoodItem(BaseModel):
     fat: float = Field(description="Fat of the food item in grams.")
     fiber: float = Field(default=0, description="Fiber of the food item in grams.")
     sugar: float = Field(default=0, description="Sugar of the food item in grams.")
+    description: str = Field(
+        default="",
+        description="One short sentence describing the dish, from the menu if it lists one.",
+    )
+    price: Optional[str] = Field(
+        default=None,
+        description="Menu price as written, like $15.25. Null if the menu does not list one.",
+    )
+    match_status: Literal["fits", "swap", "no"] = Field(
+        default="fits",
+        description=(
+            "fits: meets the user's targets, diet and allergies. "
+            "swap: fits only if the user asks for a change (say which in match_reason). "
+            "no: breaks an allergy or diet rule, or is far off the targets."
+        ),
+    )
+    match_reason: str = Field(
+        default="",
+        description="One short sentence on why the dish got its match_status.",
+    )
+    allergens: List[str] = Field(
+        default_factory=list,
+        description="Only the user's listed allergies that this dish contains or likely contains.",
+    )
+    diet_flags: List[str] = Field(
+        default_factory=list,
+        description="Short diet warnings, like 'May not be halal'. Empty if none.",
+    )
+    source: Literal["restaurant", "description"] = Field(
+        default="description",
+        description=(
+            "restaurant: the restaurant published these nutrition values. "
+            "description: you estimated them from the menu description."
+        ),
+    )
 
 
 class RestaurantRecommendation(BaseModel):
@@ -82,6 +118,28 @@ class RestaurantRecommendation(BaseModel):
             "Leave empty if unknown or not available. Do not invent URLs."
         ),
     )
+    price_level: Optional[int] = Field(
+        default=None,
+        ge=1,
+        le=4,
+        description="Price level from 1 ($) to 4 ($$$$). Null if unknown.",
+    )
+    latitude: Optional[float] = Field(
+        default=None,
+        description="Latitude of the restaurant if known from search. Null if unknown.",
+    )
+    longitude: Optional[float] = Field(
+        default=None,
+        description="Longitude of the restaurant if known from search. Null if unknown.",
+    )
+    distance_miles: Optional[float] = Field(
+        default=None,
+        description="Filled in by the server. Leave null.",
+    )
+    walk_minutes: Optional[int] = Field(
+        default=None,
+        description="Filled in by the server. Leave null.",
+    )
 
 
 class UserPreferences(BaseModel):
@@ -93,6 +151,7 @@ class UserPreferences(BaseModel):
     fat: Optional[float] = Field(default=None, description="Target fat in grams.")
     fiber: Optional[float] = Field(default=None, description="Target fiber in grams.")
     sugar: Optional[float] = Field(default=None, description="Target sugar in grams.")
+    targets_per: Literal["meal", "day"] = "meal"
     halal: bool = False
     kosher: bool = False
     allergies: List[str] = Field(default_factory=list)
@@ -120,8 +179,16 @@ class UserPreferences(BaseModel):
         location = "unknown"
         if self.latitude and self.longitude:
             location = f"{self.latitude}, {self.longitude}"
+        if self.targets_per == "day":
+            scope = (
+                "These are DAILY targets. Judge one dish against roughly a third "
+                "of each daily number."
+            )
+        else:
+            scope = "These targets are for a single meal."
         return (
             f"Macro targets (use None as unconstrained): {self.fooditem_targets()}\n"
+            f"{scope}\n"
             f"Dietary restrictions: {', '.join(diet) or 'none'}\n"
             f"Allergies to avoid: {allergies}\n"
             f"User location: {location}\n"
@@ -212,6 +279,23 @@ def payload_get(payload: Mapping[str, Any], key: str, default: Any = None) -> An
 
 def json_error(message: str, status: int):
     return jsonify({"error": message}), status
+
+
+def username_suggestions(username: str, count: int = 2) -> List[str]:
+    """Free usernames close to a taken one: name2, name_3, ..."""
+    base = username.strip()[:30]
+    candidates = [f"{base}{n}" for n in (2, 3, 4)] + [f"{base}_{n}" for n in (7, 21)]
+    try:
+        taken = {
+            doc["username"]
+            for doc in get_users_collection().find(
+                {"username": {"$in": candidates}}, {"username": 1}
+            )
+        }
+    except Exception:
+        logger.exception("Could not check username suggestions")
+        taken = set()
+    return [name for name in candidates if name not in taken][:count]
 
 
 _index_ready = False
@@ -324,9 +408,17 @@ def api_signup():
         })
     except DuplicateKeyError:
         message = "That username is already taken."
+        suggestions = username_suggestions(username)
         if wants_json():
-            return json_error(message, 409)
-        return render_template("signup.html", error=message), 409
+            response = jsonify({"error": message, "suggestions": suggestions})
+            response.status_code = 409
+            return response
+        return (
+            render_template(
+                "signup.html", error=message, suggestions=suggestions, username=username
+            ),
+            409,
+        )
     except Exception:
         logger.exception("Could not create account")
         message = "Could not create account."
@@ -453,6 +545,11 @@ def parse_preferences(payload: Mapping[str, Any]) -> UserPreferences:
         fat=parse_optional_float(payload_get(payload, "fat")),
         fiber=parse_optional_float(payload_get(payload, "fiber")),
         sugar=parse_optional_float(payload_get(payload, "sugar")),
+        targets_per=(
+            "day"
+            if str(payload_get(payload, "targets_per") or "").strip().lower() == "day"
+            else "meal"
+        ),
         halal=parse_bool(payload_get(payload, "halal")),
         kosher=parse_bool(payload_get(payload, "kosher")),
         allergies=parse_allergies(payload_get(payload, "allergies")),
@@ -482,6 +579,64 @@ def load_restaurants() -> List[dict]:
 
 def save_restaurants(restaurants: List[dict]) -> None:
     _update_user({"last_restaurants": restaurants})
+
+
+FAVORITES_LIMIT = 100
+HISTORY_LIMIT = 20
+
+
+def _now_iso() -> str:
+    return datetime.now(timezone.utc).isoformat()
+
+
+def _name_key(name: Any) -> str:
+    return str(name or "").strip().lower()
+
+
+def _restaurant_entry_key(entry: Mapping[str, Any]) -> str:
+    return _name_key(entry.get("name"))
+
+
+def _meal_entry_key(entry: Mapping[str, Any]) -> tuple:
+    item = entry.get("item") or {}
+    return (_name_key(entry.get("restaurant_name")), _name_key(item.get("name")))
+
+
+def _history_entry_key(entry: Mapping[str, Any]) -> str:
+    return _name_key((entry.get("restaurant") or {}).get("name"))
+
+
+def _upsert_front(items: List[dict], entry: dict, key_fn, limit: int) -> List[dict]:
+    key = key_fn(entry)
+    rest = [item for item in items if key_fn(item) != key]
+    return [entry, *rest][:limit]
+
+
+def _remove_by_key(items: List[dict], key: Any, key_fn) -> List[dict]:
+    return [item for item in items if key_fn(item) != key]
+
+
+def saved_payload() -> dict:
+    doc = _user_doc()
+    return {
+        "favorite_restaurants": doc.get("favorite_restaurants") or [],
+        "favorite_meals": doc.get("favorite_meals") or [],
+        "history": doc.get("history") or [],
+    }
+
+
+def record_history(restaurant: dict, menu_items: List[dict]) -> None:
+    if not menu_items or not _name_key(restaurant.get("name")):
+        return
+    entry = {
+        "restaurant": restaurant,
+        "menu_items": menu_items,
+        "checked_at": _now_iso(),
+    }
+    history = _upsert_front(
+        saved_payload()["history"], entry, _history_entry_key, HISTORY_LIMIT
+    )
+    _update_user({"history": history})
 
 
 def payload_has_preference_fields(payload: Mapping[str, Any]) -> bool:
@@ -612,12 +767,19 @@ def check_restaurant_with_gemini(preferences: UserPreferences) -> List[FoodItem]
         f"Extract or estimate a typical menu for {restaurant}. Return 8-12 real or "
         "closely estimated dishes with exact macro breakdowns for calories, proteins, "
         "carbs, fat, fiber, and sugar. Prefer official nutrition facts when known. "
-        "Skip items that conflict with allergies or dietary restrictions.\n\n"
+        "Include dishes that conflict with allergies or dietary restrictions instead "
+        "of skipping them, and mark them match_status 'no' (or 'swap' when asking "
+        "for a specific change would fix it, naming that change in match_reason). "
+        "For every dish fill in description, price (only if the menu lists one), "
+        "match_status, match_reason, allergens (only the user's allergies the dish "
+        "contains), diet_flags, and source.\n\n"
         f"{preferences.prompt_summary()}"
     )
     system = (
         "You are a nutrition analyst. Return a JSON list of FoodItem objects. "
-        "Use grams for proteins, carbs, fat, fiber, and sugar."
+        "Use grams for proteins, carbs, fat, fiber, and sugar. Set source to "
+        "'restaurant' only when the restaurant itself published the nutrition "
+        "values; otherwise use 'description'. Never invent prices."
     )
     result = generate_structured(
         prompt,
@@ -636,7 +798,34 @@ def check_restaurant_with_gemini(preferences: UserPreferences) -> List[FoodItem]
         food = item if isinstance(item, FoodItem) else FoodItem.model_validate(item)
         if food.is_food_item:
             parsed_items.append(food)
+    order = {"fits": 0, "swap": 1, "no": 2}
+    parsed_items.sort(key=lambda food: order.get(food.match_status, 3))
     return parsed_items
+
+
+def haversine_miles(lat1: float, lng1: float, lat2: float, lng2: float) -> float:
+    radius = 3958.8
+    p1, p2 = math.radians(lat1), math.radians(lat2)
+    dp = p2 - p1
+    dl = math.radians(lng2 - lng1)
+    a = math.sin(dp / 2) ** 2 + math.cos(p1) * math.cos(p2) * math.sin(dl / 2) ** 2
+    return 2 * radius * math.asin(math.sqrt(a))
+
+
+def distance_fields(
+    origin_lat: Any, origin_lng: Any, lat: Any, lng: Any
+) -> dict:
+    """Distance and walking time (20 min per mile) from the user, or {} if unknown."""
+    try:
+        miles = haversine_miles(
+            float(origin_lat), float(origin_lng), float(lat), float(lng)
+        )
+    except (TypeError, ValueError):
+        return {}
+    return {
+        "distance_miles": round(miles, 1),
+        "walk_minutes": max(1, round(miles * 20)),
+    }
 
 
 def google_maps_search_url(name: str, address: str = "") -> str:
@@ -729,6 +918,8 @@ def _places_new_item(raw: Mapping[str, Any]) -> Optional[dict]:
         "longitude": float(lng),
         "business_status": business_status or "OPERATIONAL",
         "open_now": open_now if isinstance(open_now, bool) else None,
+        "next_open_time": opening.get("nextOpenTime"),
+        "next_close_time": opening.get("nextCloseTime"),
         "rating": raw.get("rating"),
         "types": types,
         "website": str(raw.get("websiteUri") or "").strip(),
@@ -881,7 +1072,79 @@ def home_json_payload(preferences: UserPreferences) -> dict:
         "username": session.get("username"),
         "preferences": preferences.model_dump(),
         "restaurants": load_restaurants(),
+        "saved": saved_payload(),
     }
+
+
+@app.route("/api/saved", methods=["GET"])
+def api_saved():
+    return jsonify(saved_payload())
+
+
+@app.route("/api/favorites/restaurants", methods=["POST"])
+def api_favorite_restaurants():
+    payload = request_payload()
+    action = str(payload_get(payload, "action") or "").strip().lower()
+    if action not in ("add", "remove"):
+        return json_error("action must be 'add' or 'remove'.", 400)
+    try:
+        restaurant = RestaurantRecommendation.model_validate(
+            payload_get(payload, "restaurant") or {}
+        ).model_dump()
+    except Exception:
+        return json_error("A valid restaurant is required.", 400)
+    if not _name_key(restaurant["name"]):
+        return json_error("A valid restaurant is required.", 400)
+
+    favorites = saved_payload()["favorite_restaurants"]
+    if action == "add":
+        favorites = _upsert_front(
+            favorites,
+            {**restaurant, "saved_at": _now_iso()},
+            _restaurant_entry_key,
+            FAVORITES_LIMIT,
+        )
+    else:
+        favorites = _remove_by_key(
+            favorites, _name_key(restaurant["name"]), _restaurant_entry_key
+        )
+    _update_user({"favorite_restaurants": favorites})
+    return jsonify(saved_payload())
+
+
+@app.route("/api/favorites/meals", methods=["POST"])
+def api_favorite_meals():
+    payload = request_payload()
+    action = str(payload_get(payload, "action") or "").strip().lower()
+    if action not in ("add", "remove"):
+        return json_error("action must be 'add' or 'remove'.", 400)
+    try:
+        item = FoodItem.model_validate(payload_get(payload, "item") or {}).model_dump()
+    except Exception:
+        return json_error("A valid menu item is required.", 400)
+    restaurant_name = str(payload_get(payload, "restaurant_name") or "").strip()
+    if not _name_key(item["name"]) or not restaurant_name:
+        return json_error("restaurant_name and a valid item are required.", 400)
+
+    entry = {
+        "restaurant_name": restaurant_name,
+        "restaurant_address": str(payload_get(payload, "restaurant_address") or "").strip(),
+        "item": item,
+        "saved_at": _now_iso(),
+    }
+    favorites = saved_payload()["favorite_meals"]
+    if action == "add":
+        favorites = _upsert_front(favorites, entry, _meal_entry_key, FAVORITES_LIMIT)
+    else:
+        favorites = _remove_by_key(favorites, _meal_entry_key(entry), _meal_entry_key)
+    _update_user({"favorite_meals": favorites})
+    return jsonify(saved_payload())
+
+
+@app.route("/api/history/clear", methods=["POST"])
+def api_history_clear():
+    _update_user({"history": []})
+    return jsonify(saved_payload())
 
 
 @app.route("/", methods=["GET"])
@@ -912,7 +1175,21 @@ def search_restaurants():
     if request.method == "POST":
         try:
             found = search_restaurants_with_gemini(preferences)
-            restaurants = [item.model_dump() for item in found]
+            restaurants = []
+            for item in found:
+                data = item.model_dump()
+                # Distance is computed here, never trusted from the model.
+                data["distance_miles"] = None
+                data["walk_minutes"] = None
+                data.update(
+                    distance_fields(
+                        preferences.latitude,
+                        preferences.longitude,
+                        data.get("latitude"),
+                        data.get("longitude"),
+                    )
+                )
+                restaurants.append(data)
             save_restaurants(restaurants)
         except Exception:
             logger.exception("Could not search restaurants")
@@ -962,6 +1239,10 @@ def api_places_search():
         logger.exception("Places search failed")
         return json_error(str(exc) or "Could not search places.", 502)
 
+    for place in places:
+        place.update(
+            distance_fields(latitude, longitude, place["latitude"], place["longitude"])
+        )
     return jsonify({"places": places, "count": len(places)})
 
 
@@ -980,6 +1261,14 @@ def api_places_details():
         logger.exception("Place details failed")
         return json_error(str(exc) or "Could not verify that restaurant.", 502)
 
+    place.update(
+        distance_fields(
+            payload_get(payload, "latitude"),
+            payload_get(payload, "longitude"),
+            place.get("latitude"),
+            place.get("longitude"),
+        )
+    )
     return jsonify({"place": place, "verified": True})
 
 
@@ -1010,6 +1299,7 @@ def check_restaurant():
                 menu_items = []
             restaurants = load_restaurants()
             active_restaurant = resolve_restaurant(preferences.restaurant_name, restaurants)
+            record_history(active_restaurant, menu_items)
             maps_url = google_maps_search_url(
                 active_restaurant.get("name") or preferences.restaurant_name,
                 active_restaurant.get("address") or "",

@@ -156,6 +156,11 @@ class _HomeScreenState extends State<HomeScreen> {
         title: const Text('Menu preferences'),
         actions: [
           IconButton(
+            tooltip: 'Saved',
+            onPressed: () => context.push('/saved'),
+            icon: const Icon(Icons.bookmark_border),
+          ),
+          IconButton(
             tooltip: 'Log out',
             onPressed: _logout,
             icon: const Icon(Icons.logout),

@@ -40,6 +40,16 @@ class _SearchScreenState extends State<SearchScreen> {
     }
   }
 
+  Future<void> _toggleFavorite(RestaurantRecommendation restaurant) async {
+    try {
+      await SessionScope.of(context).toggleFavoriteRestaurant(restaurant);
+    } catch (error) {
+      if (mounted) {
+        showApiError(context, error);
+      }
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final session = SessionScope.of(context);
@@ -112,7 +122,27 @@ class _SearchScreenState extends State<SearchScreen> {
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
-                          Text(restaurant.name, style: Theme.of(context).textTheme.titleLarge),
+                          Row(
+                            children: [
+                              Expanded(
+                                child: Text(
+                                  restaurant.name,
+                                  style: Theme.of(context).textTheme.titleLarge,
+                                ),
+                              ),
+                              IconButton(
+                                tooltip: session.isFavoriteRestaurant(restaurant.name)
+                                    ? 'Remove from favorites'
+                                    : 'Add to favorites',
+                                onPressed: () => _toggleFavorite(restaurant),
+                                icon: Icon(
+                                  session.isFavoriteRestaurant(restaurant.name)
+                                      ? Icons.star
+                                      : Icons.star_border,
+                                ),
+                              ),
+                            ],
+                          ),
                           const SizedBox(height: 4),
                           Text(
                             [

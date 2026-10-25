@@ -6,6 +6,7 @@ class UserPreferences {
     this.fat,
     this.fiber,
     this.sugar,
+    this.targetsPer = 'meal',
     this.halal = false,
     this.kosher = false,
     this.allergies = const [],
@@ -20,6 +21,9 @@ class UserPreferences {
   final double? fat;
   final double? fiber;
   final double? sugar;
+
+  /// 'meal' or 'day': what the macro targets apply to.
+  final String targetsPer;
   final bool halal;
   final bool kosher;
   final List<String> allergies;
@@ -38,6 +42,7 @@ class UserPreferences {
       fat: _toDouble(json['fat']),
       fiber: _toDouble(json['fiber']),
       sugar: _toDouble(json['sugar']),
+      targetsPer: json['targets_per'] == 'day' ? 'day' : 'meal',
       halal: json['halal'] == true,
       kosher: json['kosher'] == true,
       allergies: (json['allergies'] as List<dynamic>? ?? [])
@@ -56,6 +61,7 @@ class UserPreferences {
     double? fat,
     double? fiber,
     double? sugar,
+    String? targetsPer,
     bool? halal,
     bool? kosher,
     List<String>? allergies,
@@ -76,6 +82,7 @@ class UserPreferences {
       fat: clearFat ? null : (fat ?? this.fat),
       fiber: clearFiber ? null : (fiber ?? this.fiber),
       sugar: clearSugar ? null : (sugar ?? this.sugar),
+      targetsPer: targetsPer ?? this.targetsPer,
       halal: halal ?? this.halal,
       kosher: kosher ?? this.kosher,
       allergies: allergies ?? this.allergies,
@@ -93,6 +100,7 @@ class UserPreferences {
       'fat': fat,
       'fiber': fiber,
       'sugar': sugar,
+      'targets_per': targetsPer,
       'halal': halal,
       'kosher': kosher,
       'allergies': allergies.join(', '),
@@ -113,6 +121,11 @@ class RestaurantRecommendation {
     this.possibleIdeas = '',
     this.website = '',
     this.doordashUrl = '',
+    this.priceLevel,
+    this.latitude,
+    this.longitude,
+    this.distanceMiles,
+    this.walkMinutes,
   });
 
   final String name;
@@ -123,6 +136,13 @@ class RestaurantRecommendation {
   final String website;
   final String doordashUrl;
 
+  /// 1 to 4 ($ to $$$$), or null if unknown.
+  final int? priceLevel;
+  final double? latitude;
+  final double? longitude;
+  final double? distanceMiles;
+  final int? walkMinutes;
+
   factory RestaurantRecommendation.fromJson(Map<String, dynamic> json) {
     return RestaurantRecommendation(
       name: (json['name'] ?? '').toString(),
@@ -132,7 +152,29 @@ class RestaurantRecommendation {
       possibleIdeas: (json['possible_ideas'] ?? '').toString(),
       website: (json['website'] ?? '').toString(),
       doordashUrl: (json['doordash_url'] ?? '').toString(),
+      priceLevel: _toDouble(json['price_level'])?.round(),
+      latitude: _toDouble(json['latitude']),
+      longitude: _toDouble(json['longitude']),
+      distanceMiles: _toDouble(json['distance_miles']),
+      walkMinutes: _toDouble(json['walk_minutes'])?.round(),
     );
+  }
+
+  Map<String, dynamic> toJson() {
+    return {
+      'name': name,
+      'address': address,
+      'cuisine': cuisine,
+      'why_it_matches': whyItMatches,
+      'possible_ideas': possibleIdeas,
+      'website': website,
+      'doordash_url': doordashUrl,
+      'price_level': priceLevel,
+      'latitude': latitude,
+      'longitude': longitude,
+      'distance_miles': distanceMiles,
+      'walk_minutes': walkMinutes,
+    };
   }
 
   String get googleMapsUrl {
@@ -156,6 +198,10 @@ class MapPlace {
     this.rating,
     this.website = '',
     this.mapsUrl = '',
+    this.nextOpenTime,
+    this.nextCloseTime,
+    this.distanceMiles,
+    this.walkMinutes,
   });
 
   final String placeId;
@@ -169,6 +215,12 @@ class MapPlace {
   final String website;
   final String mapsUrl;
 
+  /// RFC 3339 timestamps from Places, used for "Open until 10 PM".
+  final DateTime? nextOpenTime;
+  final DateTime? nextCloseTime;
+  final double? distanceMiles;
+  final int? walkMinutes;
+
   factory MapPlace.fromJson(Map<String, dynamic> json) {
     return MapPlace(
       placeId: (json['place_id'] ?? '').toString(),
@@ -181,6 +233,10 @@ class MapPlace {
       rating: _toDouble(json['rating']),
       website: (json['website'] ?? '').toString(),
       mapsUrl: (json['maps_url'] ?? '').toString(),
+      nextOpenTime: DateTime.tryParse((json['next_open_time'] ?? '').toString()),
+      nextCloseTime: DateTime.tryParse((json['next_close_time'] ?? '').toString()),
+      distanceMiles: _toDouble(json['distance_miles']),
+      walkMinutes: _toDouble(json['walk_minutes'])?.round(),
     );
   }
 
@@ -189,6 +245,10 @@ class MapPlace {
       name: name,
       address: address,
       website: website,
+      latitude: latitude,
+      longitude: longitude,
+      distanceMiles: distanceMiles,
+      walkMinutes: walkMinutes,
     );
   }
 }
@@ -204,6 +264,13 @@ class FoodItem {
     this.fat = 0,
     this.fiber = 0,
     this.sugar = 0,
+    this.description = '',
+    this.price,
+    this.matchStatus = 'fits',
+    this.matchReason = '',
+    this.allergens = const [],
+    this.dietFlags = const [],
+    this.source = 'description',
   });
 
   final String name;
@@ -215,6 +282,17 @@ class FoodItem {
   final double fat;
   final double fiber;
   final double sugar;
+  final String description;
+  final String? price;
+
+  /// 'fits', 'swap' or 'no'.
+  final String matchStatus;
+  final String matchReason;
+  final List<String> allergens;
+  final List<String> dietFlags;
+
+  /// 'restaurant' (published by the restaurant) or 'description' (estimated).
+  final String source;
 
   factory FoodItem.fromJson(Map<String, dynamic> json) {
     return FoodItem(
@@ -229,8 +307,127 @@ class FoodItem {
       fat: _toDouble(json['fat']) ?? 0,
       fiber: _toDouble(json['fiber']) ?? 0,
       sugar: _toDouble(json['sugar']) ?? 0,
+      description: (json['description'] ?? '').toString(),
+      price: (json['price'] ?? '').toString().trim().isEmpty
+          ? null
+          : json['price'].toString(),
+      matchStatus: const {'fits', 'swap', 'no'}.contains(json['match_status'])
+          ? json['match_status'] as String
+          : 'fits',
+      matchReason: (json['match_reason'] ?? '').toString(),
+      allergens: (json['allergens'] as List<dynamic>? ?? [])
+          .map((item) => item.toString())
+          .toList(),
+      dietFlags: (json['diet_flags'] as List<dynamic>? ?? [])
+          .map((item) => item.toString())
+          .toList(),
+      source: json['source'] == 'restaurant' ? 'restaurant' : 'description',
     );
   }
+
+  Map<String, dynamic> toJson() {
+    return {
+      'name': name,
+      'quantity': quantity,
+      'ingredients': ingredients,
+      'calories': calories,
+      'proteins': proteins,
+      'carbs': carbs,
+      'fat': fat,
+      'fiber': fiber,
+      'sugar': sugar,
+      'description': description,
+      'price': price,
+      'match_status': matchStatus,
+      'match_reason': matchReason,
+      'allergens': allergens,
+      'diet_flags': dietFlags,
+      'source': source,
+    };
+  }
+}
+
+class FavoriteMeal {
+  FavoriteMeal({
+    required this.restaurantName,
+    required this.item,
+    this.restaurantAddress = '',
+  });
+
+  final String restaurantName;
+  final String restaurantAddress;
+  final FoodItem item;
+
+  factory FavoriteMeal.fromJson(Map<String, dynamic> json) {
+    return FavoriteMeal(
+      restaurantName: (json['restaurant_name'] ?? '').toString(),
+      restaurantAddress: (json['restaurant_address'] ?? '').toString(),
+      item: FoodItem.fromJson(_stringMap(json['item'])),
+    );
+  }
+}
+
+class HistoryEntry {
+  HistoryEntry({
+    required this.restaurant,
+    required this.menuItems,
+    this.checkedAt,
+  });
+
+  final RestaurantRecommendation restaurant;
+  final List<FoodItem> menuItems;
+  final DateTime? checkedAt;
+
+  factory HistoryEntry.fromJson(Map<String, dynamic> json) {
+    return HistoryEntry(
+      restaurant: RestaurantRecommendation.fromJson(
+        _stringMap(json['restaurant']),
+      ),
+      menuItems: (json['menu_items'] as List<dynamic>? ?? [])
+          .whereType<Map>()
+          .map((item) => FoodItem.fromJson(_stringMap(item)))
+          .toList(),
+      checkedAt: DateTime.tryParse((json['checked_at'] ?? '').toString()),
+    );
+  }
+}
+
+class SavedData {
+  SavedData({
+    this.favoriteRestaurants = const [],
+    this.favoriteMeals = const [],
+    this.history = const [],
+  });
+
+  final List<RestaurantRecommendation> favoriteRestaurants;
+  final List<FavoriteMeal> favoriteMeals;
+  final List<HistoryEntry> history;
+
+  factory SavedData.fromJson(Map<String, dynamic>? json) {
+    if (json == null) {
+      return SavedData();
+    }
+    List<T> parse<T>(String key, T Function(Map<String, dynamic>) build) {
+      return (json[key] as List<dynamic>? ?? [])
+          .whereType<Map>()
+          .map((item) => build(_stringMap(item)))
+          .toList();
+    }
+
+    return SavedData(
+      favoriteRestaurants:
+          parse('favorite_restaurants', RestaurantRecommendation.fromJson),
+      favoriteMeals: parse('favorite_meals', FavoriteMeal.fromJson),
+      history: parse('history', HistoryEntry.fromJson),
+    );
+  }
+}
+
+Map<String, dynamic> _stringMap(dynamic value) {
+  if (value is Map) {
+    return value.map((key, item) => MapEntry(key.toString(), item));
+  }
+  return {};
 }
 
 double? _toDouble(dynamic value) {

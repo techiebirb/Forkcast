@@ -16,6 +16,60 @@ class SessionController extends ChangeNotifier {
   UserPreferences preferences = UserPreferences();
   List<RestaurantRecommendation> restaurants = [];
   List<FoodItem> menuItems = [];
+  SavedData saved = SavedData();
+
+  static String _key(String value) => value.trim().toLowerCase();
+
+  bool isFavoriteRestaurant(String name) => saved.favoriteRestaurants
+      .any((item) => _key(item.name) == _key(name));
+
+  bool isFavoriteMeal(String restaurantName, String itemName) =>
+      saved.favoriteMeals.any(
+        (meal) =>
+            _key(meal.restaurantName) == _key(restaurantName) &&
+            _key(meal.item.name) == _key(itemName),
+      );
+
+  Future<void> refreshSaved() async {
+    saved = await api.getSaved();
+    notifyListeners();
+  }
+
+  Future<void> toggleFavoriteRestaurant(
+    RestaurantRecommendation restaurant,
+  ) async {
+    saved = await api.setFavoriteRestaurant(
+      restaurant,
+      favorite: !isFavoriteRestaurant(restaurant.name),
+    );
+    notifyListeners();
+  }
+
+  Future<void> toggleFavoriteMeal(
+    RestaurantRecommendation restaurant,
+    FoodItem item,
+  ) async {
+    saved = await api.setFavoriteMeal(
+      restaurant.name,
+      restaurant.address,
+      item,
+      favorite: !isFavoriteMeal(restaurant.name, item.name),
+    );
+    notifyListeners();
+  }
+
+  Future<void> clearHistory() async {
+    saved = await api.clearHistory();
+    notifyListeners();
+  }
+
+  /// Shows a saved menu on the check screen without calling Gemini again.
+  void openHistoryEntry(HistoryEntry entry) {
+    menuItems = entry.menuItems;
+    rememberRestaurant(entry.restaurant);
+    preferences = preferences.copyWith(restaurantName: entry.restaurant.name);
+    notifyListeners();
+  }
 
   void _onSessionExpired() {
     if (!api.sessionExpired.value || !authenticated) {
@@ -31,6 +85,7 @@ class SessionController extends ChangeNotifier {
     preferences = UserPreferences();
     restaurants = [];
     menuItems = [];
+    saved = SavedData();
   }
 
   @override
@@ -59,6 +114,7 @@ class SessionController extends ChangeNotifier {
     username = home.username;
     preferences = home.preferences;
     restaurants = home.restaurants;
+    saved = home.saved;
     authenticated = true;
     notifyListeners();
   }
@@ -111,6 +167,9 @@ class SessionController extends ChangeNotifier {
       }
     }
     notifyListeners();
+    if (menuItems.isNotEmpty) {
+      refreshSaved().catchError((_) {});
+    }
     return result.error;
   }
 

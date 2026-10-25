@@ -7,6 +7,7 @@ import 'screens/check_screen.dart';
 import 'screens/home_screen.dart';
 import 'screens/login_screen.dart';
 import 'screens/map_pick_screen.dart';
+import 'screens/saved_screen.dart';
 import 'screens/search_screen.dart';
 import 'screens/signup_screen.dart';
 import 'session.dart';
@@ -68,6 +69,10 @@ GoRouter createRouter(SessionController session) {
         path: '/check-restaurant',
         builder: (context, state) => const CheckScreen(),
       ),
+      GoRoute(
+        path: '/saved',
+        builder: (context, state) => const SavedScreen(),
+      ),
     ],
   );
 }
@@ -89,7 +94,7 @@ class _MenuAppState extends State<MenuApp> {
     return SessionScope(
       controller: widget.session,
       child: MaterialApp.router(
-        title: 'Menu Match',
+        title: 'Forkcast',
         theme: buildAppTheme(),
         routerConfig: _router,
       ),
