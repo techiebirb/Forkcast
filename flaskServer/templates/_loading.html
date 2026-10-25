@@ -23,17 +23,6 @@
     {{ appbar(title="Checking the menu") }}
     <main class="fw-main" role="status" aria-live="polite">
         <div class="fw-loading">
-            <section class="fc-card" style="padding: 16px; display: flex; flex-direction: column; gap: 12px;">
-                <div class="fw-row" style="gap: 12px;">
-                    <span class="fc-spinner" aria-hidden="true" style="color: var(--accent);"></span>
-                    <p class="fw-body fw-strong">Reading the menu for you</p>
-                </div>
-                <ol class="fa-steps">
-                    <li class="is-current"><span class="fa-steps__mark"><span class="fc-spinner"></span></span>Finding the menu</li>
-                    <li><span class="fa-steps__mark"><span class="fa-steps__dot"></span></span>Estimating macros</li>
-                    <li><span class="fa-steps__mark"><span class="fa-steps__dot"></span></span>Checking your allergies and diet</li>
-                </ol>
-            </section>
             {{ skeleton(3) }}
         </div>
     </main>

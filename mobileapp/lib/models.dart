@@ -121,6 +121,8 @@ class RestaurantRecommendation {
     this.possibleIdeas = '',
     this.website = '',
     this.doordashUrl = '',
+    this.placeId = '',
+    this.mapsUrl = '',
     this.priceLevel,
     this.latitude,
     this.longitude,
@@ -135,6 +137,10 @@ class RestaurantRecommendation {
   final String possibleIdeas;
   final String website;
   final String doordashUrl;
+
+  /// Set by the server from Google Places; empty for unverified entries.
+  final String placeId;
+  final String mapsUrl;
 
   /// 1 to 4 ($ to $$$$), or null if unknown.
   final int? priceLevel;
@@ -152,6 +158,8 @@ class RestaurantRecommendation {
       possibleIdeas: (json['possible_ideas'] ?? '').toString(),
       website: (json['website'] ?? '').toString(),
       doordashUrl: (json['doordash_url'] ?? '').toString(),
+      placeId: (json['place_id'] ?? '').toString(),
+      mapsUrl: (json['maps_url'] ?? '').toString(),
       priceLevel: _toDouble(json['price_level'])?.round(),
       latitude: _toDouble(json['latitude']),
       longitude: _toDouble(json['longitude']),
@@ -169,6 +177,8 @@ class RestaurantRecommendation {
       'possible_ideas': possibleIdeas,
       'website': website,
       'doordash_url': doordashUrl,
+      'place_id': placeId,
+      'maps_url': mapsUrl,
       'price_level': priceLevel,
       'latitude': latitude,
       'longitude': longitude,
@@ -177,7 +187,19 @@ class RestaurantRecommendation {
     };
   }
 
+  /// DoorDash store URLs can't be verified, so link to a search by name.
+  String get doordashSearchUrl {
+    final trimmed = name.trim();
+    if (trimmed.isEmpty) {
+      return '';
+    }
+    return 'https://www.doordash.com/search/store/${Uri.encodeComponent(trimmed)}/';
+  }
+
   String get googleMapsUrl {
+    if (mapsUrl.isNotEmpty) {
+      return mapsUrl;
+    }
     final query = [name, address].where((part) => part.trim().isNotEmpty).join(' ');
     if (query.isEmpty) {
       return '';
@@ -245,6 +267,8 @@ class MapPlace {
       name: name,
       address: address,
       website: website,
+      placeId: placeId,
+      mapsUrl: mapsUrl,
       latitude: latitude,
       longitude: longitude,
       distanceMiles: distanceMiles,

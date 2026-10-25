@@ -278,6 +278,8 @@ class _MapPickScreenState extends State<MapPickScreen> {
             name: verified.name,
             address: verified.address,
             website: verified.website,
+            placeId: verified.placeId,
+            mapsUrl: verified.mapsUrl,
             latitude: verified.latitude,
             longitude: verified.longitude,
             distanceMiles: selected.distanceMiles,

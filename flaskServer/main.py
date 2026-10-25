@@ -2,10 +2,13 @@ import json
 import logging
 import math
 import os
+import random
+import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, List, Literal, Mapping, Optional
-from urllib.parse import quote_plus, urlparse
+from concurrent.futures import ThreadPoolExecutor
+from urllib.parse import quote, quote_plus, urlparse
 
 import certifi
 import requests
@@ -22,7 +25,19 @@ from werkzeug.security import check_password_hash, generate_password_hash
 load_dotenv()
 
 
-MODEL_NAME = "gemini-3.1-flash-lite"
+# Tried in order; each model has its own quota, so a later one covers 503/429 on
+# an earlier one. Override with GEMINI_MODELS="a,b".
+MODEL_NAMES = tuple(
+    name.strip()
+    for name in os.environ.get(
+        "GEMINI_MODELS", "gemini-3.5-flash-lite,gemini-3.1-flash-lite"
+    ).split(",")
+    if name.strip()
+)
+GEMINI_TIMEOUT_MS = 45_000
+GEMINI_BUDGET_SECONDS = 100
+GEMINI_ATTEMPTS_PER_MODEL = 2
+TOOLS_COOLDOWN_SECONDS = 600
 MONGO_URI = os.environ.get("MONGO_URI", "").strip()
 IS_PRODUCTION = os.environ.get("APP_ENV", "").lower() == "production"
 logger = logging.getLogger(__name__)
@@ -106,17 +121,19 @@ class RestaurantRecommendation(BaseModel):
     )
     website: str = Field(
         default="",
-        description=(
-            "Official restaurant website URL if known from search. "
-            "Leave empty if unknown. Do not invent URLs."
-        ),
+        description="Filled in by the server from Google Places. Leave empty.",
     )
     doordash_url: str = Field(
         default="",
-        description=(
-            "DoorDash store page URL if this restaurant is listed on DoorDash. "
-            "Leave empty if unknown or not available. Do not invent URLs."
-        ),
+        description="Filled in by the server. Leave empty.",
+    )
+    place_id: str = Field(
+        default="",
+        description="Filled in by the server. Leave empty.",
+    )
+    maps_url: str = Field(
+        default="",
+        description="Filled in by the server. Leave empty.",
     )
     price_level: Optional[int] = Field(
         default=None,
@@ -232,7 +249,17 @@ def _load_maps_api_key() -> str:
 
 
 GOOGLE_MAPS_API_KEY = _load_maps_api_key()
-client = genai.Client(api_key=GEMINI_API_KEY) if GEMINI_API_KEY else None
+client = (
+    genai.Client(
+        api_key=GEMINI_API_KEY,
+        http_options=types.HttpOptions(timeout=GEMINI_TIMEOUT_MS),
+    )
+    if GEMINI_API_KEY
+    else None
+)
+# Monotonic time before which search/maps grounding is skipped, set when a
+# grounded call is rejected (e.g. grounding is not available on the free tier).
+_tools_disabled_until = 0.0
 mongo_client: Optional[MongoClient] = None
 
 app = Flask(__name__)
@@ -704,7 +731,7 @@ def generate_structured(
     if use_maps:
         tools.append({"google_maps": {}})
 
-    def _call(with_tools: bool):
+    def _call(model: str, with_tools: bool):
         config_kwargs: dict[str, Any] = {
             "response_mime_type": "application/json",
             "response_schema": schema,
@@ -726,29 +753,76 @@ def generate_structured(
                 except (TypeError, ValueError):
                     pass
         return api_client.models.generate_content(
-            model=MODEL_NAME,
+            model=model,
             contents=contents,
             config=types.GenerateContentConfig(**config_kwargs),
         )
 
-    try:
-        response = _call(bool(tools))
-    except Exception:
-        response = _call(False)
+    def _parse(response: Any) -> Any:
+        parsed = response.parsed
+        if parsed is not None:
+            return parsed
+        text = (response.text or "").strip()
+        if not text:
+            raise ValueError("Gemini returned an empty response.")
+        data = json.loads(text)
+        if schema is list[FoodItem]:
+            return [FoodItem.model_validate(item) for item in data]
+        if schema is list[RestaurantRecommendation]:
+            return [RestaurantRecommendation.model_validate(item) for item in data]
+        return data
 
-    parsed = response.parsed
-    if parsed is not None:
-        return parsed
+    # Gemini fails transiently (503 overload, 429 quota, truncated JSON). Try each
+    # model in turn: transient errors back off and retry the same model, 429 and
+    # 404 move straight to the next model, and a rejected grounded call retries
+    # without tools (and pauses grounding for a while).
+    global _tools_disabled_until
+    deadline = time.monotonic() + GEMINI_BUDGET_SECONDS
+    last_error: Optional[Exception] = None
+    for model in MODEL_NAMES:
+        for attempt in range(GEMINI_ATTEMPTS_PER_MODEL):
+            if time.monotonic() >= deadline:
+                break
+            with_tools = bool(tools) and time.monotonic() >= _tools_disabled_until
+            try:
+                return _parse(_call(model, with_tools))
+            except Exception as exc:
+                last_error = exc
+                code = getattr(exc, "code", None)
+                if code == 429:
+                    kind = "quota"
+                elif code == 404:
+                    kind = "no-model"
+                elif code in (400, 403) and with_tools:
+                    kind = "no-tools"
+                elif isinstance(code, int) and 400 <= code < 500:
+                    kind = "fatal"
+                else:
+                    kind = "transient"
+                logger.warning(
+                    "Gemini model=%s tools=%s attempt=%d kind=%s code=%s: %s",
+                    model, with_tools, attempt + 1, kind, code, exc,
+                )
+                if kind == "fatal":
+                    raise
+                if with_tools and kind in ("quota", "no-tools"):
+                    _tools_disabled_until = time.monotonic() + TOOLS_COOLDOWN_SECONDS
+                    logger.warning(
+                        "Pausing search/maps grounding for %ds", TOOLS_COOLDOWN_SECONDS
+                    )
+                if kind in ("quota", "no-model"):
+                    break
+                if kind == "transient" and attempt + 1 < GEMINI_ATTEMPTS_PER_MODEL:
+                    time.sleep((1.0, 2.5)[attempt] + random.random() * 0.5)
+    if last_error is None:
+        raise RuntimeError("Gemini request ran out of time.")
+    raise last_error
 
-    text = (response.text or "").strip()
-    if not text:
-        return []
-    data = json.loads(text)
-    if schema is list[FoodItem]:
-        return [FoodItem.model_validate(item) for item in data]
-    if schema is list[RestaurantRecommendation]:
-        return [RestaurantRecommendation.model_validate(item) for item in data]
-    return data
+
+def gemini_error_message(exc: Exception, fallback: str) -> str:
+    if getattr(exc, "code", None) in (429, 500, 503, 504):
+        return "Gemini is busy right now. Please try again in a few seconds."
+    return fallback
 
 
 def search_restaurants_with_gemini(preferences: UserPreferences) -> List[RestaurantRecommendation]:
@@ -765,9 +839,8 @@ def search_restaurants_with_gemini(preferences: UserPreferences) -> List[Restaur
         "You are a local dining assistant. Use maps and search only to find nearby "
         "restaurants. Do not inspect menus or estimate nutrition. Avoid suggesting "
         "places that clearly conflict with allergens or halal/kosher when requested. "
-        "When search finds an official website or DoorDash store page, include those "
-        "URLs; otherwise leave website and doordash_url empty. Never invent URLs. "
-        "Return only structured restaurant recommendations."
+        "Leave website, doordash_url, place_id and maps_url empty; the server fills "
+        "them in. Return only structured restaurant recommendations."
     )
     result = generate_structured(
         prompt,
@@ -860,6 +933,62 @@ def google_maps_search_url(name: str, address: str = "") -> str:
     if not query:
         return ""
     return f"https://www.google.com/maps/search/?api=1&query={quote_plus(query)}"
+
+
+def doordash_search_url(name: str) -> str:
+    # DoorDash store URLs resolve by numeric ID only, and we can't verify one, so
+    # link to a search by name instead of a store page.
+    cleaned = (name or "").strip()
+    if not cleaned:
+        return ""
+    return f"https://www.doordash.com/search/store/{quote(cleaned)}/"
+
+
+def _name_tokens(value: str) -> str:
+    return "".join(ch for ch in (value or "").lower() if ch.isalnum())
+
+
+def enrich_with_place(
+    data: dict, origin_lat: Any = None, origin_lng: Any = None
+) -> dict:
+    """Replace model-written links and coordinates with Google Places data.
+
+    Keeps a Places match only when the names agree; otherwise clears the
+    unverified website so we never show a guessed URL.
+    """
+    data["website"] = ""
+    data["place_id"] = ""
+    data["maps_url"] = ""
+    lat = parse_optional_float(origin_lat)
+    lng = parse_optional_float(origin_lng)
+    if lat is None or lng is None:
+        lat, lng = data.get("latitude"), data.get("longitude")
+    wanted = _name_tokens(data.get("name", ""))
+    if lat is None or lng is None or not wanted or not require_maps_api_key():
+        return data
+    try:
+        places = search_google_places(
+            latitude=float(lat),
+            longitude=float(lng),
+            query=f"{data['name']} {data.get('address') or ''}".strip(),
+            radius_meters=5000,
+        )
+    except Exception:
+        logger.warning("Places lookup failed for %s", data.get("name"), exc_info=True)
+        return data
+    for place in places:
+        found = _name_tokens(place["name"])
+        if found and (wanted in found or found in wanted):
+            data.update(
+                website=place["website"],
+                place_id=place["place_id"],
+                maps_url=place["maps_url"],
+                address=place["address"] or data.get("address", ""),
+                latitude=place["latitude"],
+                longitude=place["longitude"],
+            )
+            break
+    return data
 
 
 def require_maps_api_key() -> Optional[str]:
@@ -1091,6 +1220,8 @@ def resolve_restaurant(name: str, restaurants: List[dict]) -> dict:
         "possible_ideas": "",
         "website": "",
         "doordash_url": "",
+        "place_id": "",
+        "maps_url": "",
     }
 
 
@@ -1202,9 +1333,18 @@ def search_restaurants():
     if request.method == "POST":
         try:
             found = search_restaurants_with_gemini(preferences)
+            with ThreadPoolExecutor(max_workers=5) as pool:
+                enriched = list(
+                    pool.map(
+                        lambda item: enrich_with_place(
+                            item.model_dump(), preferences.latitude, preferences.longitude
+                        ),
+                        found,
+                    )
+                )
             restaurants = []
-            for item in found:
-                data = item.model_dump()
+            for data in enriched:
+                data["doordash_url"] = doordash_search_url(data.get("name"))
                 # Distance is computed here, never trusted from the model.
                 data["distance_miles"] = None
                 data["walk_minutes"] = None
@@ -1218,9 +1358,9 @@ def search_restaurants():
                 )
                 restaurants.append(data)
             save_restaurants(restaurants)
-        except Exception:
+        except Exception as exc:
             logger.exception("Could not search restaurants")
-            error = "Could not search restaurants."
+            error = gemini_error_message(exc, "Could not search restaurants.")
             restaurants = []
 
     if wants_json():
@@ -1306,10 +1446,6 @@ def check_restaurant():
     menu_items: List[dict] = _user_doc().get("last_menu_items") or []
     restaurants = load_restaurants()
     active_restaurant = resolve_restaurant(preferences.restaurant_name, restaurants)
-    maps_url = google_maps_search_url(
-        active_restaurant.get("name") or preferences.restaurant_name,
-        active_restaurant.get("address") or "",
-    )
 
     if request.method == "POST":
         if not preferences.restaurant_name:
@@ -1320,17 +1456,21 @@ def check_restaurant():
                 found = check_restaurant_with_gemini(preferences)
                 menu_items = [item.model_dump() for item in found]
                 _update_user({"last_menu_items": menu_items})
-            except Exception:
+            except Exception as exc:
                 logger.exception("Could not check that restaurant")
-                error = "Could not check that restaurant."
+                error = gemini_error_message(exc, "Could not check that restaurant.")
                 menu_items = []
             restaurants = load_restaurants()
             active_restaurant = resolve_restaurant(preferences.restaurant_name, restaurants)
             record_history(active_restaurant, menu_items)
-            maps_url = google_maps_search_url(
-                active_restaurant.get("name") or preferences.restaurant_name,
-                active_restaurant.get("address") or "",
-            )
+
+    restaurant_name = active_restaurant.get("name") or preferences.restaurant_name
+    maps_url = active_restaurant.get("maps_url") or google_maps_search_url(
+        restaurant_name, active_restaurant.get("address") or ""
+    )
+    # Always rebuilt from the name; stored DoorDash URLs may be stale guesses.
+    doordash_url = doordash_search_url(restaurant_name)
+    active_restaurant = {**active_restaurant, "doordash_url": doordash_url}
 
     if wants_json():
         return jsonify({

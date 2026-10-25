@@ -1,5 +1,3 @@
-import 'dart:async';
-
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'package:url_launcher/url_launcher.dart';
@@ -8,7 +6,6 @@ import '../app.dart';
 import '../models.dart';
 import '../session.dart';
 import '../theme/fc_tokens.dart';
-import '../widgets/ai_steps.dart';
 import '../widgets/fc_button.dart';
 import '../widgets/fc_cards.dart';
 import '../widgets/fc_chips.dart';
@@ -39,8 +36,6 @@ class CheckScreen extends StatefulWidget {
 
 class _CheckScreenState extends State<CheckScreen> {
   _CheckPhase _phase = _CheckPhase.loading;
-  int _step = 0;
-  Timer? _stepTimer;
 
   bool _started = false;
 
@@ -62,49 +57,10 @@ class _CheckScreenState extends State<CheckScreen> {
     }
   }
 
-  @override
-  void dispose() {
-    _stepTimer?.cancel();
-    super.dispose();
-  }
-
-  List<String> _stepLabels(UserPreferences prefs) {
-    final diets = [
-      if (prefs.halal) 'halal',
-      if (prefs.kosher) 'kosher',
-    ].join(' and ');
-    return [
-      'Finding the menu',
-      'Estimating macros',
-      if (prefs.allergies.isNotEmpty)
-        'Checking ${_andList(prefs.allergies)}',
-      if (diets.isNotEmpty) 'Checking $diets',
-    ];
-  }
-
-  static String _andList(List<String> items) {
-    if (items.length <= 1) {
-      return items.join();
-    }
-    return '${items.sublist(0, items.length - 1).join(', ')} and ${items.last}';
-  }
-
   Future<void> _load(CheckRequest request) async {
     final session = SessionScope.of(context);
     session.beginCheck(request.restaurant);
-    setState(() {
-      _phase = _CheckPhase.loading;
-      _step = 0;
-    });
-    // The steps advance on a timer so the wait reads as progress. They name
-    // what the AI is doing, never an invented count.
-    final last = _stepLabels(session.preferences).length - 1;
-    _stepTimer?.cancel();
-    _stepTimer = Timer.periodic(const Duration(seconds: 4), (_) {
-      if (mounted && _step < last) {
-        setState(() => _step++);
-      }
-    });
+    setState(() => _phase = _CheckPhase.loading);
     try {
       final error = await session.checkRestaurant(session.preferences);
       if (!mounted) {
@@ -123,8 +79,6 @@ class _CheckScreenState extends State<CheckScreen> {
       if (mounted) {
         setState(() => _phase = _CheckPhase.error);
       }
-    } finally {
-      _stepTimer?.cancel();
     }
   }
 
@@ -256,11 +210,11 @@ class _CheckScreenState extends State<CheckScreen> {
                   variant: FcButtonVariant.secondary,
                   onPressed: () => _openLink(r.website),
                 ),
-              if (r.doordashUrl.isNotEmpty)
+              if (r.doordashSearchUrl.isNotEmpty)
                 FcButton(
-                  label: 'DoorDash',
+                  label: 'Find on DoorDash',
                   variant: FcButtonVariant.secondary,
-                  onPressed: () => _openLink(r.doordashUrl),
+                  onPressed: () => _openLink(r.doordashSearchUrl),
                 ),
             ],
           ),
@@ -280,35 +234,9 @@ class _CheckScreenState extends State<CheckScreen> {
           Semantics(
             liveRegion: true,
             container: true,
-            child: FcCard(
-              padding: const EdgeInsets.all(FcSpace.s4),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Row(
-                    children: [
-                      FcSpinner(size: 18, color: c.accent),
-                      const SizedBox(width: FcSpace.s3),
-                      Text(
-                        'Reading the menu for you',
-                        style: FcText.body.copyWith(
-                          fontWeight: FontWeight.w600,
-                          color: c.textPrimary,
-                        ),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: FcSpace.s3),
-                  AiSteps(
-                    steps: _stepLabels(session.preferences),
-                    current: _step,
-                  ),
-                ],
-              ),
-            ),
+            label: 'Checking the menu',
+            child: const ListState(kind: ListStateKind.loading, rows: 3),
           ),
-          const SizedBox(height: 20),
-          const ListState(kind: ListStateKind.loading, rows: 3),
         ];
       case _CheckPhase.error:
         return [

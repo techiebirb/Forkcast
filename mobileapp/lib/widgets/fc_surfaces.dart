@@ -463,6 +463,7 @@ class FcSheet extends StatelessWidget {
     final c = context.fc;
     return Semantics(
       scopesRoute: true,
+      explicitChildNodes: true,
       namesRoute: true,
       label: title,
       child: Container(
