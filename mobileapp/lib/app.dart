@@ -10,6 +10,7 @@ import 'screens/map_pick_screen.dart';
 import 'screens/saved_screen.dart';
 import 'screens/search_screen.dart';
 import 'screens/signup_screen.dart';
+import 'screens/startup_screen.dart';
 import 'session.dart';
 
 class SessionScope extends InheritedNotifier<SessionController> {
@@ -28,11 +29,15 @@ class SessionScope extends InheritedNotifier<SessionController> {
 
 GoRouter createRouter(SessionController session) {
   return GoRouter(
-    initialLocation: '/login',
+    initialLocation: '/starting',
     refreshListenable: session,
     redirect: (context, state) {
-      if (!session.ready) {
-        return null;
+      final starting = state.matchedLocation == '/starting';
+      if (!session.ready || session.startupError != null) {
+        return starting ? null : '/starting';
+      }
+      if (starting) {
+        return session.authenticated ? '/' : '/login';
       }
       final loggingIn = state.matchedLocation == '/login' ||
           state.matchedLocation == '/signup';
@@ -45,6 +50,10 @@ GoRouter createRouter(SessionController session) {
       return null;
     },
     routes: [
+      GoRoute(
+        path: '/starting',
+        builder: (context, state) => const StartupScreen(),
+      ),
       GoRoute(
         path: '/login',
         builder: (context, state) => const LoginScreen(),
@@ -86,8 +95,29 @@ class MenuApp extends StatefulWidget {
   State<MenuApp> createState() => _MenuAppState();
 }
 
-class _MenuAppState extends State<MenuApp> {
+class _MenuAppState extends State<MenuApp> with WidgetsBindingObserver {
   late final GoRouter _router = createRouter(widget.session);
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addObserver(this);
+  }
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    // Coming back after a long time away: start waking the server now so the
+    // banner shows up before the user taps anything.
+    if (state == AppLifecycleState.resumed && widget.session.ready) {
+      widget.session.api.wakeIfIdle();
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -97,6 +127,77 @@ class _MenuAppState extends State<MenuApp> {
         title: 'Forkcast',
         theme: buildAppTheme(),
         routerConfig: _router,
+        builder: (context, child) => Stack(
+          children: [
+            if (child != null) child,
+            _WakingBanner(session: widget.session),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// Slim banner shown mid-session while the server is waking up. The startup
+/// screen covers the app-launch case, so it is hidden until the session is
+/// ready.
+class _WakingBanner extends StatelessWidget {
+  const _WakingBanner({required this.session});
+
+  final SessionController session;
+
+  @override
+  Widget build(BuildContext context) {
+    return ListenableBuilder(
+      listenable: session,
+      builder: (context, _) => ValueListenableBuilder<bool>(
+        valueListenable: session.api.serverWaking,
+        builder: (context, waking, _) {
+          final show = waking && session.ready && session.startupError == null;
+          return Align(
+            alignment: Alignment.topCenter,
+            child: IgnorePointer(
+              ignoring: !show,
+              child: AnimatedSlide(
+                duration: const Duration(milliseconds: 250),
+                offset: show ? Offset.zero : const Offset(0, -1.5),
+                child: const Material(
+                  color: kAccent,
+                  elevation: 4,
+                  child: SafeArea(
+                    bottom: false,
+                    child: Padding(
+                      padding: EdgeInsets.symmetric(
+                        horizontal: 16,
+                        vertical: 10,
+                      ),
+                      child: Row(
+                        children: [
+                          SizedBox(
+                            width: 16,
+                            height: 16,
+                            child: CircularProgressIndicator(
+                              strokeWidth: 2,
+                              color: Colors.white,
+                            ),
+                          ),
+                          SizedBox(width: 12),
+                          Expanded(
+                            child: Text(
+                              'Waking up the server — this can take up to a '
+                              'minute.',
+                              style: TextStyle(color: Colors.white),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          );
+        },
       ),
     );
   }

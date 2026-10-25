@@ -12,6 +12,7 @@ class SessionController extends ChangeNotifier {
 
   bool ready = false;
   bool authenticated = false;
+  String? startupError;
   String? username;
   UserPreferences preferences = UserPreferences();
   List<RestaurantRecommendation> restaurants = [];
@@ -94,8 +95,24 @@ class SessionController extends ChangeNotifier {
     super.dispose();
   }
 
+  Future<void> retryStartup() async {
+    startupError = null;
+    ready = false;
+    notifyListeners();
+    await bootstrap();
+  }
+
   Future<void> bootstrap() async {
-    api.ping(); // fire and forget: wakes a cold-started server
+    // Wait out a Render cold start before touching the session, so a slow
+    // wake-up is never mistaken for being signed out.
+    final awake = await api.wakeIfIdle();
+    if (!awake) {
+      startupError = "Couldn't reach Forkcast. Check your connection and "
+          'try again.';
+      ready = true;
+      notifyListeners();
+      return;
+    }
     try {
       authenticated = await api.isAuthenticated();
       if (authenticated) {

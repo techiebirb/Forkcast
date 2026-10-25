@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:cookie_jar/cookie_jar.dart';
 import 'package:flutter/foundation.dart';
 import 'package:dio/dio.dart';
@@ -65,7 +67,77 @@ class ApiClient {
   /// after the user was signed in.
   final ValueNotifier<bool> sessionExpired = ValueNotifier(false);
 
+  /// True while the server looks like it is cold-starting (Render free tier).
+  final ValueNotifier<bool> serverWaking = ValueNotifier(false);
+
   static const _authPaths = {'/api/login', '/api/signup', '/login', '/healthz'};
+
+  static const _sleepAfter = Duration(minutes: 14);
+  static const _wakingDelay = Duration(seconds: 3);
+  static const _wakeRetryEvery = Duration(seconds: 3);
+  static const _wakeGiveUp = Duration(seconds: 120);
+
+  DateTime? _lastResponseAt;
+  Future<bool>? _warmup;
+
+  bool get _maybeAsleep =>
+      _lastResponseAt == null ||
+      DateTime.now().difference(_lastResponseAt!) > _sleepAfter;
+
+  bool get _onRender => apiBaseUrl.contains('onrender.com');
+
+  /// Render's spin-up page comes from its proxy (HTML, 502/503, or missing the
+  /// `x-render-origin-server` header our app always sets).
+  bool _isWakeResponse(Response<dynamic> response) {
+    if (!_onRender) {
+      return false;
+    }
+    final status = response.statusCode ?? 0;
+    if (status == 502 || status == 503) {
+      return true;
+    }
+    final type = response.headers.value('content-type') ?? '';
+    if (type.startsWith('text/html')) {
+      return true;
+    }
+    return response.headers.value('x-render-origin-server') == null;
+  }
+
+  void _markAwake() {
+    _lastResponseAt = DateTime.now();
+    serverWaking.value = false;
+  }
+
+  /// Retries a request that hit Render's wake-up page until it succeeds or
+  /// [_wakeGiveUp] passes.
+  Future<void> _retryWhileWaking(
+    RequestOptions options,
+    Response<dynamic> wakeResponse,
+    dynamic handler,
+  ) async {
+    serverWaking.value = true;
+    final started = (options.extra['wakeStart'] as DateTime?) ?? DateTime.now();
+    if (DateTime.now().difference(started) > _wakeGiveUp) {
+      serverWaking.value = false;
+      handler.reject(
+        DioException(
+          requestOptions: options,
+          type: DioExceptionType.connectionTimeout,
+          message: 'The server is taking too long to start. '
+              'Please try again in a moment.',
+        ),
+      );
+      return;
+    }
+    await Future<void>.delayed(_wakeRetryEvery);
+    options.extra['wakeStart'] = started;
+    try {
+      handler.resolve(await _dio.fetch<dynamic>(options));
+    } on DioException catch (error) {
+      serverWaking.value = false;
+      handler.reject(error);
+    }
+  }
 
   Future<void> init() async {
     final supportDir = await getApplicationSupportDirectory();
@@ -87,7 +159,28 @@ class ApiClient {
     _dio.interceptors.add(CookieManager(_cookieJar));
     _dio.interceptors.add(
       InterceptorsWrapper(
+        onRequest: (options, handler) async {
+          // After a long idle, ping /healthz first so the wait is shown as a
+          // wake-up, not as a slow request.
+          if (options.path != '/healthz') {
+            await wakeIfIdle();
+          }
+          handler.next(options);
+        },
+        onError: (error, handler) {
+          final response = error.response;
+          if (response != null && _isWakeResponse(response)) {
+            _retryWhileWaking(error.requestOptions, response, handler);
+            return;
+          }
+          handler.next(error);
+        },
         onResponse: (response, handler) {
+          if (_isWakeResponse(response)) {
+            _retryWhileWaking(response.requestOptions, response, handler);
+            return;
+          }
+          _markAwake();
           if (response.statusCode == 401 &&
               !_authPaths.contains(response.requestOptions.path)) {
             sessionExpired.value = true;
@@ -112,6 +205,34 @@ class ApiClient {
       return response.statusCode == 200;
     } catch (_) {
       return false;
+    }
+  }
+
+  /// If the server may be asleep (nothing heard for [_sleepAfter]), pings
+  /// /healthz until it answers, flipping [serverWaking] on if that takes more
+  /// than [_wakingDelay]. Concurrent callers share one wake-up. Returns false
+  /// if the server never answered. Never throws.
+  Future<bool> wakeIfIdle() {
+    if (!_maybeAsleep) {
+      return Future.value(true);
+    }
+    return _warmup ??= _wake().whenComplete(() => _warmup = null);
+  }
+
+  Future<bool> _wake() async {
+    final timer = Timer(_wakingDelay, () => serverWaking.value = true);
+    try {
+      final deadline = DateTime.now().add(_wakeGiveUp);
+      while (DateTime.now().isBefore(deadline)) {
+        if (await ping()) {
+          return true;
+        }
+        await Future<void>.delayed(const Duration(seconds: 2));
+      }
+      return false;
+    } finally {
+      timer.cancel();
+      serverWaking.value = false;
     }
   }
 
