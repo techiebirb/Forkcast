@@ -1,0 +1,40 @@
+{# Views that replace the page while a slow AI request runs. static/loading.js
+   copies a template into the page when a form (or submit button) with
+   data-loading="search" or data-loading="check" is submitted. #}
+{% from "_components.html" import appbar, icon, skeleton %}
+
+<template id="fw-loading-search">
+    {{ appbar(title="Places for you", subtitle="Near you") }}
+    <main class="fw-main" role="status" aria-live="polite">
+        <div class="fw-loading">
+            <div class="fw-loading__head">
+                <span class="fc-spinner" aria-hidden="true"></span>
+                <div>
+                    <p class="fw-body fw-strong">Finding places that fit your goals</p>
+                    <p class="fw-sm fw-muted">Looking for places nearby that match your targets, diets and allergies.</p>
+                </div>
+            </div>
+            {{ skeleton(4) }}
+        </div>
+    </main>
+</template>
+
+<template id="fw-loading-check">
+    {{ appbar(title="Checking the menu") }}
+    <main class="fw-main" role="status" aria-live="polite">
+        <div class="fw-loading">
+            <section class="fc-card" style="padding: 16px; display: flex; flex-direction: column; gap: 12px;">
+                <div class="fw-row" style="gap: 12px;">
+                    <span class="fc-spinner" aria-hidden="true" style="color: var(--accent);"></span>
+                    <p class="fw-body fw-strong">Reading the menu for you</p>
+                </div>
+                <ol class="fa-steps">
+                    <li class="is-current"><span class="fa-steps__mark"><span class="fc-spinner"></span></span>Finding the menu</li>
+                    <li><span class="fa-steps__mark"><span class="fa-steps__dot"></span></span>Estimating macros</li>
+                    <li><span class="fa-steps__mark"><span class="fa-steps__dot"></span></span>Checking your allergies and diet</li>
+                </ol>
+            </section>
+            {{ skeleton(3) }}
+        </div>
+    </main>
+</template>

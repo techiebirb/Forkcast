@@ -1,297 +1,430 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
+import 'package:go_router/go_router.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import '../app.dart';
 import '../models.dart';
+import '../session.dart';
+import '../theme/fc_tokens.dart';
+import '../widgets/ai_steps.dart';
+import '../widgets/fc_button.dart';
+import '../widgets/fc_cards.dart';
+import '../widgets/fc_chips.dart';
+import '../widgets/fc_icons.dart';
+import '../widgets/fc_surfaces.dart';
+import '../widgets/fc_toggles.dart';
+import '../widgets/food_item_card.dart';
 
-class CheckScreen extends StatelessWidget {
-  const CheckScreen({super.key});
+/// Pass as the route `extra` to make the Check screen load a fresh menu for
+/// [restaurant]. Without it the screen shows the menu already in the session
+/// (a reopened history entry).
+class CheckRequest {
+  const CheckRequest(this.restaurant);
 
-  RestaurantRecommendation _activeRestaurant(
-    String name,
-    List<RestaurantRecommendation> restaurants,
-  ) {
-    final cleaned = name.trim();
-    for (final restaurant in restaurants) {
-      if (restaurant.name.trim() == cleaned) {
+  final RestaurantRecommendation restaurant;
+}
+
+enum _CheckPhase { loading, results, noMenu, error }
+
+class CheckScreen extends StatefulWidget {
+  const CheckScreen({super.key, this.request});
+
+  final CheckRequest? request;
+
+  @override
+  State<CheckScreen> createState() => _CheckScreenState();
+}
+
+class _CheckScreenState extends State<CheckScreen> {
+  _CheckPhase _phase = _CheckPhase.loading;
+  int _step = 0;
+  Timer? _stepTimer;
+
+  bool _started = false;
+
+  // Inherited widgets can't be read in initState, so the first look at the
+  // session happens here.
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    if (_started) {
+      return;
+    }
+    _started = true;
+    final request = widget.request;
+    if (request == null) {
+      final empty = SessionScope.of(context).menuItems.isEmpty;
+      _phase = empty ? _CheckPhase.noMenu : _CheckPhase.results;
+    } else {
+      WidgetsBinding.instance.addPostFrameCallback((_) => _load(request));
+    }
+  }
+
+  @override
+  void dispose() {
+    _stepTimer?.cancel();
+    super.dispose();
+  }
+
+  List<String> _stepLabels(UserPreferences prefs) {
+    final diets = [
+      if (prefs.halal) 'halal',
+      if (prefs.kosher) 'kosher',
+    ].join(' and ');
+    return [
+      'Finding the menu',
+      'Estimating macros',
+      if (prefs.allergies.isNotEmpty)
+        'Checking ${_andList(prefs.allergies)}',
+      if (diets.isNotEmpty) 'Checking $diets',
+    ];
+  }
+
+  static String _andList(List<String> items) {
+    if (items.length <= 1) {
+      return items.join();
+    }
+    return '${items.sublist(0, items.length - 1).join(', ')} and ${items.last}';
+  }
+
+  Future<void> _load(CheckRequest request) async {
+    final session = SessionScope.of(context);
+    session.beginCheck(request.restaurant);
+    setState(() {
+      _phase = _CheckPhase.loading;
+      _step = 0;
+    });
+    // The steps advance on a timer so the wait reads as progress. They name
+    // what the AI is doing, never an invented count.
+    final last = _stepLabels(session.preferences).length - 1;
+    _stepTimer?.cancel();
+    _stepTimer = Timer.periodic(const Duration(seconds: 4), (_) {
+      if (mounted && _step < last) {
+        setState(() => _step++);
+      }
+    });
+    try {
+      final error = await session.checkRestaurant(session.preferences);
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        if (error != null && error.isNotEmpty) {
+          _phase = _CheckPhase.error;
+        } else if (session.menuItems.isEmpty) {
+          _phase = _CheckPhase.noMenu;
+        } else {
+          _phase = _CheckPhase.results;
+        }
+      });
+    } catch (_) {
+      if (mounted) {
+        setState(() => _phase = _CheckPhase.error);
+      }
+    } finally {
+      _stepTimer?.cancel();
+    }
+  }
+
+  RestaurantRecommendation _active(SessionController session) {
+    final name = session.preferences.restaurantName.trim();
+    for (final restaurant in session.restaurants) {
+      if (restaurant.name.trim() == name) {
         return restaurant;
       }
     }
-    return RestaurantRecommendation(name: cleaned);
+    return RestaurantRecommendation(name: name);
   }
 
-  Future<void> _guarded(
-    BuildContext context,
-    Future<void> Function() action,
-  ) async {
+  Future<void> _guarded(Future<void> Function() action) async {
     try {
       await action();
     } catch (error) {
-      if (context.mounted) {
+      if (mounted) {
         showApiError(context, error);
       }
     }
   }
 
-  Future<void> _openLink(BuildContext context, String url) async {
+  Future<void> _openLink(String url) async {
     final uri = Uri.tryParse(url);
     if (uri == null) {
       return;
     }
     final launched = await launchUrl(uri, mode: LaunchMode.externalApplication);
-    if (!launched && context.mounted) {
+    if (!launched && mounted) {
       showApiError(context, 'Could not open that link.');
     }
   }
 
   @override
   Widget build(BuildContext context) {
+    final c = context.fc;
     final session = SessionScope.of(context);
-    final prefs = session.preferences;
-    final items = session.menuItems;
-    final restaurants = session.restaurants;
-    final active = _activeRestaurant(prefs.restaurantName, restaurants);
+    final active = _active(session);
 
     return Scaffold(
-      appBar: AppBar(title: const Text('Check a restaurant')),
-      body: ListView(
-        padding: const EdgeInsets.fromLTRB(20, 8, 20, 32),
-        children: [
-          Card(
-            child: Padding(
-              padding: const EdgeInsets.all(18),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
+      backgroundColor: c.bg,
+      body: SafeArea(
+        child: Column(
+          children: [
+            const FcAppBar(backLabel: 'Back to results'),
+            Expanded(
+              child: ListView(
+                padding: const EdgeInsets.fromLTRB(
+                  FcSpace.s4,
+                  0,
+                  FcSpace.s4,
+                  FcSpace.s8,
+                ),
                 children: [
-                  Row(
-                    children: [
-                      Expanded(
-                        child: Text(
-                          prefs.restaurantName.isEmpty
-                              ? 'No restaurant selected'
-                              : prefs.restaurantName,
-                          style: Theme.of(context).textTheme.titleLarge,
-                        ),
-                      ),
-                      if (active.name.isNotEmpty)
-                        IconButton(
-                          tooltip: session.isFavoriteRestaurant(active.name)
-                              ? 'Remove from favorites'
-                              : 'Add to favorites',
-                          onPressed: () => _guarded(
-                            context,
-                            () => session.toggleFavoriteRestaurant(active),
-                          ),
-                          icon: Icon(
-                            session.isFavoriteRestaurant(active.name)
-                                ? Icons.star
-                                : Icons.star_border,
-                          ),
-                        ),
-                    ],
-                  ),
-                  if (active.address.isNotEmpty) ...[
-                    const SizedBox(height: 4),
-                    Text(
-                      active.address,
-                      style: Theme.of(context).textTheme.bodySmall,
-                    ),
-                  ],
-                  const SizedBox(height: 8),
-                  Text(
-                    'Menu items parsed with Gemini structured output.',
-                    style: Theme.of(context).textTheme.bodySmall,
-                  ),
-                  const SizedBox(height: 12),
-                  _PrefRow('Calories', prefs.calories?.toString() ?? 'Any'),
-                  _PrefRow(
-                    'Proteins',
-                    prefs.proteins == null ? 'Any' : '${prefs.proteins} g',
-                  ),
-                  _PrefRow(
-                    'Carbs',
-                    prefs.carbs == null ? 'Any' : '${prefs.carbs} g',
-                  ),
-                  _PrefRow('Fat', prefs.fat == null ? 'Any' : '${prefs.fat} g'),
-                  _PrefRow(
-                    'Fiber',
-                    prefs.fiber == null ? 'Any' : '${prefs.fiber} g',
-                  ),
-                  _PrefRow(
-                    'Sugar',
-                    prefs.sugar == null ? 'Any' : '${prefs.sugar} g',
-                  ),
-                  _PrefRow('Halal', prefs.halal ? 'Yes' : 'No'),
-                  _PrefRow('Kosher', prefs.kosher ? 'Yes' : 'No'),
-                  _PrefRow(
-                    'Allergies',
-                    prefs.allergies.isEmpty
-                        ? 'None'
-                        : prefs.allergies.join(', '),
-                  ),
-                  if (active.name.isNotEmpty) ...[
-                    const SizedBox(height: 12),
-                    Wrap(
-                      spacing: 10,
-                      runSpacing: 10,
-                      children: [
-                        if (active.googleMapsUrl.isNotEmpty)
-                          OutlinedButton(
-                            onPressed: () =>
-                                _openLink(context, active.googleMapsUrl),
-                            child: const Text('Google Maps'),
-                          ),
-                        if (active.website.isNotEmpty)
-                          OutlinedButton(
-                            onPressed: () =>
-                                _openLink(context, active.website),
-                            child: const Text('Website'),
-                          ),
-                        if (active.doordashUrl.isNotEmpty)
-                          OutlinedButton(
-                            onPressed: () =>
-                                _openLink(context, active.doordashUrl),
-                            child: const Text('DoorDash'),
-                          ),
-                      ],
-                    ),
-                  ],
+                  _header(c, session, active),
+                  const SizedBox(height: 20),
+                  ..._body(c, session, active),
                 ],
               ),
-            ),
-          ),
-          if (items.isEmpty)
-            Card(
-              child: Padding(
-                padding: const EdgeInsets.all(18),
-                child: Text(
-                  'No menu items yet. Pick a restaurant from the map to load its menu.',
-                  style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                        color: Theme.of(context).colorScheme.onSurfaceVariant,
-                      ),
-                ),
-              ),
-            )
-          else
-            ...items.map(
-              (item) => _FoodCard(
-                item: item,
-                favorite: session.isFavoriteMeal(active.name, item.name),
-                onToggleFavorite: () => _guarded(
-                  context,
-                  () => session.toggleFavoriteMeal(active, item),
-                ),
-              ),
-            ),
-        ],
-      ),
-    );
-  }
-}
-
-class _PrefRow extends StatelessWidget {
-  const _PrefRow(this.label, this.value);
-
-  final String label;
-  final String value;
-
-  @override
-  Widget build(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 6),
-      child: Row(
-        children: [
-          SizedBox(
-            width: 90,
-            child: Text(label, style: Theme.of(context).textTheme.labelLarge),
-          ),
-          Expanded(child: Text(value)),
-        ],
-      ),
-    );
-  }
-}
-
-class _FoodCard extends StatelessWidget {
-  const _FoodCard({
-    required this.item,
-    required this.favorite,
-    required this.onToggleFavorite,
-  });
-
-  final FoodItem item;
-  final bool favorite;
-  final VoidCallback onToggleFavorite;
-
-  @override
-  Widget build(BuildContext context) {
-    return Card(
-      margin: const EdgeInsets.only(bottom: 12),
-      child: Padding(
-        padding: const EdgeInsets.all(18),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
-              children: [
-                Expanded(
-                  child: Text(
-                    item.name,
-                    style: Theme.of(context).textTheme.titleMedium,
-                  ),
-                ),
-                IconButton(
-                  tooltip: favorite ? 'Remove from favorites' : 'Save this meal',
-                  onPressed: onToggleFavorite,
-                  icon: Icon(favorite ? Icons.bookmark : Icons.bookmark_border),
-                ),
-              ],
-            ),
-            Text(item.quantity, style: Theme.of(context).textTheme.bodySmall),
-            if (item.ingredients.isNotEmpty) ...[
-              const SizedBox(height: 6),
-              Text(item.ingredients.join(', ')),
-            ],
-            const SizedBox(height: 12),
-            Wrap(
-              spacing: 10,
-              runSpacing: 10,
-              children: [
-                _MacroChip('Calories', item.calories.toString()),
-                _MacroChip('Protein', '${item.proteins} g'),
-                _MacroChip('Carbs', '${item.carbs} g'),
-                _MacroChip('Fat', '${item.fat} g'),
-                _MacroChip('Fiber', '${item.fiber} g'),
-                _MacroChip('Sugar', '${item.sugar} g'),
-              ],
             ),
           ],
         ),
       ),
     );
   }
-}
 
-class _MacroChip extends StatelessWidget {
-  const _MacroChip(this.label, this.value);
+  Widget _header(FcColors c, SessionController session, RestaurantRecommendation r) {
+    final hasName = r.name.isNotEmpty;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          children: [
+            Expanded(
+              child: Semantics(
+                header: true,
+                child: Text(
+                  hasName ? r.name : 'No restaurant selected',
+                  style: FcText.title.copyWith(color: c.textPrimary),
+                ),
+              ),
+            ),
+            if (hasName)
+              FavoriteToggle(
+                pressed: session.isFavoriteRestaurant(r.name),
+                onPressed: () => _guarded(
+                  () => session.toggleFavoriteRestaurant(r),
+                ),
+              ),
+          ],
+        ),
+        const SizedBox(height: FcSpace.s2),
+        RestaurantMeta(restaurant: r),
+        if (r.address.isNotEmpty) ...[
+          const SizedBox(height: FcSpace.s2),
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Padding(
+                padding: const EdgeInsets.only(top: 2),
+                child: FcIcon(FcIcons.mapPin, size: 16, color: c.textSecondary),
+              ),
+              const SizedBox(width: 6),
+              Expanded(
+                child: Text(
+                  r.address,
+                  style: FcText.bodySm.copyWith(color: c.textSecondary),
+                ),
+              ),
+            ],
+          ),
+        ],
+        if (hasName) ...[
+          const SizedBox(height: FcSpace.s3),
+          Wrap(
+            spacing: FcSpace.s2,
+            runSpacing: FcSpace.s2,
+            children: [
+              if (r.googleMapsUrl.isNotEmpty)
+                FcButton(
+                  label: 'Google Maps',
+                  variant: FcButtonVariant.secondary,
+                  onPressed: () => _openLink(r.googleMapsUrl),
+                ),
+              if (r.website.isNotEmpty)
+                FcButton(
+                  label: 'Website',
+                  variant: FcButtonVariant.secondary,
+                  onPressed: () => _openLink(r.website),
+                ),
+              if (r.doordashUrl.isNotEmpty)
+                FcButton(
+                  label: 'DoorDash',
+                  variant: FcButtonVariant.secondary,
+                  onPressed: () => _openLink(r.doordashUrl),
+                ),
+            ],
+          ),
+        ],
+      ],
+    );
+  }
 
-  final String label;
-  final String value;
+  List<Widget> _body(
+    FcColors c,
+    SessionController session,
+    RestaurantRecommendation active,
+  ) {
+    switch (_phase) {
+      case _CheckPhase.loading:
+        return [
+          Semantics(
+            liveRegion: true,
+            container: true,
+            child: FcCard(
+              padding: const EdgeInsets.all(FcSpace.s4),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      FcSpinner(size: 18, color: c.accent),
+                      const SizedBox(width: FcSpace.s3),
+                      Text(
+                        'Reading the menu for you',
+                        style: FcText.body.copyWith(
+                          fontWeight: FontWeight.w600,
+                          color: c.textPrimary,
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: FcSpace.s3),
+                  AiSteps(
+                    steps: _stepLabels(session.preferences),
+                    current: _step,
+                  ),
+                ],
+              ),
+            ),
+          ),
+          const SizedBox(height: 20),
+          const ListState(kind: ListStateKind.loading, rows: 3),
+        ];
+      case _CheckPhase.error:
+        return [
+          FcCard(
+            child: ListState(
+              kind: ListStateKind.error,
+              title: "Couldn't check this menu",
+              body: 'Check your connection and try again. The quick links '
+                  'above still work.',
+              actionLabel: widget.request == null ? null : 'Try again',
+              onAction: widget.request == null
+                  ? null
+                  : () => _load(widget.request!),
+            ),
+          ),
+        ];
+      case _CheckPhase.noMenu:
+        return [
+          FcCard(
+            child: ListState(
+              kind: ListStateKind.empty,
+              title: 'No menu found online',
+              body: "We couldn't find a menu we can read for "
+                  '${active.name.isEmpty ? 'this restaurant' : active.name}. '
+                  'Try their website or DoorDash, or ask staff about your '
+                  'allergies.',
+              actionLabel: 'Back to results',
+              onAction: () => context.pop(),
+            ),
+          ),
+        ];
+      case _CheckPhase.results:
+        return _results(c, session, active);
+    }
+  }
 
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
-      decoration: BoxDecoration(
-        color: const Color(0xFFEEF6F0),
-        borderRadius: BorderRadius.circular(10),
+  List<Widget> _results(
+    FcColors c,
+    SessionController session,
+    RestaurantRecommendation active,
+  ) {
+    final items = session.menuItems;
+    final groups = <(String, MatchStatus)>[
+      ('Fits you', MatchStatus.fits),
+      ('Fits with a swap', MatchStatus.swap),
+      ("Doesn't fit", MatchStatus.no),
+    ];
+    return [
+      PrefSummaryCard(
+        preferences: session.preferences,
+        title: 'Checking against',
+        style: PrefSummaryStyle.targets,
+        onEdit: () => context.go('/'),
       ),
-      child: Column(
+      const SizedBox(height: 20),
+      Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text(label, style: Theme.of(context).textTheme.labelSmall),
-          Text(value, style: Theme.of(context).textTheme.labelLarge),
+          Padding(
+            padding: const EdgeInsets.only(top: 1),
+            child: FcIcon(FcIcons.info, size: 16, color: c.textSecondary),
+          ),
+          const SizedBox(width: 6),
+          Expanded(
+            child: Text(
+              'Macros are AI estimates from the menu, not lab values. Ask '
+              'staff about allergies before you order.',
+              style: FcText.caption.copyWith(
+                fontWeight: FontWeight.w400,
+                color: c.textSecondary,
+              ),
+            ),
+          ),
         ],
       ),
-    );
+      for (final (title, status) in groups) ...[
+        ..._group(c, session, active, title, status, items),
+      ],
+    ];
+  }
+
+  List<Widget> _group(
+    FcColors c,
+    SessionController session,
+    RestaurantRecommendation active,
+    String title,
+    MatchStatus status,
+    List<FoodItem> items,
+  ) {
+    final inGroup =
+        items.where((item) => matchStatusFrom(item.matchStatus) == status);
+    if (inGroup.isEmpty) {
+      return const [];
+    }
+    return [
+      const SizedBox(height: 20),
+      Semantics(
+        header: true,
+        child: Text(
+          '$title · ${inGroup.length}',
+          style: FcText.tabular(FcText.heading).copyWith(
+            color: c.textPrimary,
+          ),
+        ),
+      ),
+      const SizedBox(height: FcSpace.s3),
+      for (final item in inGroup) ...[
+        FoodItemCard(
+          item: item,
+          favorite: session.isFavoriteMeal(active.name, item.name),
+          onFavorite: () => _guarded(
+            () => session.toggleFavoriteMeal(active, item),
+          ),
+        ),
+        const SizedBox(height: FcSpace.s3),
+      ],
+    ];
   }
 }

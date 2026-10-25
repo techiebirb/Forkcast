@@ -12,6 +12,7 @@ import 'screens/search_screen.dart';
 import 'screens/signup_screen.dart';
 import 'screens/startup_screen.dart';
 import 'session.dart';
+import 'widgets/waking_banner.dart';
 
 class SessionScope extends InheritedNotifier<SessionController> {
   const SessionScope({
@@ -76,7 +77,11 @@ GoRouter createRouter(SessionController session) {
       ),
       GoRoute(
         path: '/check-restaurant',
-        builder: (context, state) => const CheckScreen(),
+        builder: (context, state) => CheckScreen(
+          request: state.extra is CheckRequest
+              ? state.extra as CheckRequest
+              : null,
+        ),
       ),
       GoRoute(
         path: '/saved',
@@ -125,104 +130,22 @@ class _MenuAppState extends State<MenuApp> with WidgetsBindingObserver {
       controller: widget.session,
       child: MaterialApp.router(
         title: 'Forkcast',
-        theme: buildAppTheme(),
+        theme: buildLightTheme(),
+        darkTheme: buildDarkTheme(),
+        themeMode: ThemeMode.system,
         routerConfig: _router,
-        builder: (context, child) => Stack(
-          children: [
-            if (child != null) child,
-            _WakingBanner(session: widget.session),
-          ],
-        ),
-      ),
-    );
-  }
-}
-
-/// Slim banner shown mid-session while the server is waking up. The startup
-/// screen covers the app-launch case, so it is hidden until the session is
-/// ready.
-class _WakingBanner extends StatelessWidget {
-  const _WakingBanner({required this.session});
-
-  final SessionController session;
-
-  @override
-  Widget build(BuildContext context) {
-    return ListenableBuilder(
-      listenable: session,
-      builder: (context, _) => ValueListenableBuilder<bool>(
-        valueListenable: session.api.serverWaking,
-        builder: (context, waking, _) {
-          final show = waking && session.ready && session.startupError == null;
-          return Align(
-            alignment: Alignment.topCenter,
-            child: IgnorePointer(
-              ignoring: !show,
-              child: AnimatedSlide(
-                duration: const Duration(milliseconds: 250),
-                offset: show ? Offset.zero : const Offset(0, -1.5),
-                child: const Material(
-                  color: kAccent,
-                  elevation: 4,
-                  child: SafeArea(
-                    bottom: false,
-                    child: Padding(
-                      padding: EdgeInsets.symmetric(
-                        horizontal: 16,
-                        vertical: 10,
-                      ),
-                      child: Row(
-                        children: [
-                          SizedBox(
-                            width: 16,
-                            height: 16,
-                            child: CircularProgressIndicator(
-                              strokeWidth: 2,
-                              color: Colors.white,
-                            ),
-                          ),
-                          SizedBox(width: 12),
-                          Expanded(
-                            child: Text(
-                              'Waking up the server — this can take up to a '
-                              'minute.',
-                              style: TextStyle(color: Colors.white),
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                  ),
-                ),
-              ),
+        // The waking banner shows mid-session only; the startup screen covers
+        // the launch case, so it stays hidden until the session is ready.
+        builder: (context, child) => ListenableBuilder(
+          listenable: widget.session,
+          builder: (context, _) => ValueListenableBuilder<bool>(
+            valueListenable: widget.session.api.serverWaking,
+            builder: (context, waking, _) => WakingBannerHost(
+              show: waking &&
+                  widget.session.ready &&
+                  widget.session.startupError == null,
+              child: child ?? const SizedBox.shrink(),
             ),
-          );
-        },
-      ),
-    );
-  }
-}
-
-class LoadingBarrier extends StatelessWidget {
-  const LoadingBarrier({super.key, required this.message});
-
-  final String message;
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      color: Colors.black38,
-      alignment: Alignment.center,
-      child: Card(
-        child: Padding(
-          padding: const EdgeInsets.all(24),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              const CircularProgressIndicator(),
-              const SizedBox(height: 16),
-              Text(message),
-            ],
           ),
         ),
       ),

@@ -5,6 +5,27 @@ import '../app.dart';
 import '../location.dart';
 import '../models.dart';
 import '../session.dart';
+import '../theme/fc_tokens.dart';
+import '../widgets/fc_button.dart';
+import '../widgets/fc_chips.dart';
+import '../widgets/fc_form.dart';
+import '../widgets/fc_icons.dart';
+import '../widgets/fc_logo.dart';
+import '../widgets/fc_surfaces.dart';
+
+/// Allergens offered as one-tap chips. The key is what is stored (lowercase).
+const _commonAllergies = <(String, String, IconData?)>[
+  ('peanuts', 'Peanuts', FcIcons.acorn),
+  ('tree nuts', 'Tree nuts', FcIcons.acorn),
+  ('shellfish', 'Shellfish', FcIcons.shrimp),
+  ('fish', 'Fish', FcIcons.fish),
+  ('egg', 'Egg', FcIcons.egg),
+  ('dairy', 'Dairy', FcIcons.cheese),
+  ('gluten', 'Gluten', FcIcons.bread),
+];
+
+String _capitalize(String value) =>
+    value.isEmpty ? value : value[0].toUpperCase() + value.substring(1);
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
@@ -14,30 +35,39 @@ class HomeScreen extends StatefulWidget {
 }
 
 class _HomeScreenState extends State<HomeScreen> {
-  late final TextEditingController _calories;
-  late final TextEditingController _proteins;
-  late final TextEditingController _carbs;
-  late final TextEditingController _fat;
-  late final TextEditingController _fiber;
-  late final TextEditingController _sugar;
-  late final TextEditingController _allergies;
+  late final TextEditingController _calories = TextEditingController();
+  late final TextEditingController _proteins = TextEditingController();
+  late final TextEditingController _carbs = TextEditingController();
+  late final TextEditingController _fat = TextEditingController();
+  late final TextEditingController _fiber = TextEditingController();
+  late final TextEditingController _sugar = TextEditingController();
+  final TextEditingController _allergyInput = TextEditingController();
+
+  late final List<TextEditingController> _macroControllers = [
+    _calories,
+    _proteins,
+    _carbs,
+    _fat,
+    _fiber,
+    _sugar,
+  ];
+
+  List<String> _allergies = [];
+  String _targetsPer = 'meal';
   bool _halal = false;
   bool _kosher = false;
-  bool _busy = false;
-  String _busyMessage = 'Loading...';
+  bool _searching = false;
 
+  /// True when preferences were already saved before this visit.
+  bool _hadSaved = false;
   bool _loadedPrefs = false;
 
   @override
   void initState() {
     super.initState();
-    _calories = TextEditingController();
-    _proteins = TextEditingController();
-    _carbs = TextEditingController();
-    _fat = TextEditingController();
-    _fiber = TextEditingController();
-    _sugar = TextEditingController();
-    _allergies = TextEditingController();
+    for (final controller in _macroControllers) {
+      controller.addListener(_onFormChanged);
+    }
   }
 
   @override
@@ -54,32 +84,39 @@ class _HomeScreenState extends State<HomeScreen> {
     _fat.text = _macroText(prefs.fat);
     _fiber.text = _macroText(prefs.fiber);
     _sugar.text = _macroText(prefs.sugar);
-    _allergies.text = prefs.allergies.join(', ');
+    _allergies = List.of(prefs.allergies);
+    _targetsPer = prefs.targetsPer;
     _halal = prefs.halal;
     _kosher = prefs.kosher;
+    _hadSaved = _hasAnyTarget;
   }
 
   @override
   void dispose() {
-    _calories.dispose();
-    _proteins.dispose();
-    _carbs.dispose();
-    _fat.dispose();
-    _fiber.dispose();
-    _sugar.dispose();
-    _allergies.dispose();
+    for (final controller in _macroControllers) {
+      controller.dispose();
+    }
+    _allergyInput.dispose();
     super.dispose();
   }
 
-  String _macroText(double? value) {
-    if (value == null) {
-      return '';
+  void _onFormChanged() {
+    if (mounted) {
+      setState(() {});
     }
-    if (value == value.roundToDouble()) {
-      return value.toInt().toString();
-    }
-    return value.toString();
   }
+
+  String _macroText(double? value) => value == null ? '' : fcNum(value);
+
+  double? _parse(TextEditingController controller) =>
+      double.tryParse(controller.text.trim());
+
+  /// Something to search on: a macro target, a diet, or an allergy.
+  bool get _hasAnyTarget =>
+      _macroControllers.any((c) => _parse(c) != null) ||
+      _halal ||
+      _kosher ||
+      _allergies.isNotEmpty;
 
   UserPreferences _fromForm(
     SessionController session, {
@@ -88,51 +125,46 @@ class _HomeScreenState extends State<HomeScreen> {
     String? restaurantName,
   }) {
     return UserPreferences(
-      calories: double.tryParse(_calories.text.trim()),
-      proteins: double.tryParse(_proteins.text.trim()),
-      carbs: double.tryParse(_carbs.text.trim()),
-      fat: double.tryParse(_fat.text.trim()),
-      fiber: double.tryParse(_fiber.text.trim()),
-      sugar: double.tryParse(_sugar.text.trim()),
+      calories: _parse(_calories),
+      proteins: _parse(_proteins),
+      carbs: _parse(_carbs),
+      fat: _parse(_fat),
+      fiber: _parse(_fiber),
+      sugar: _parse(_sugar),
+      targetsPer: _targetsPer,
       halal: _halal,
       kosher: _kosher,
-      allergies: _allergies.text
-          .split(',')
-          .map((item) => item.trim().toLowerCase())
-          .where((item) => item.isNotEmpty)
-          .toList(),
+      allergies: _allergies,
       restaurantName: restaurantName ?? session.preferences.restaurantName,
       latitude: latitude ?? session.preferences.latitude,
       longitude: longitude ?? session.preferences.longitude,
     );
   }
 
+  /// Gets the location, stores the form as the current preferences, and opens
+  /// the results screen, which runs the search itself.
   Future<void> _search() async {
+    if (_searching) {
+      return;
+    }
     final session = SessionScope.of(context);
     final router = GoRouter.of(context);
-    setState(() {
-      _busy = true;
-      _busyMessage = 'Finding nearby restaurants...';
-    });
+    setState(() => _searching = true);
     try {
       final coords = await requireLocation();
-      final error = await session.searchRestaurants(
+      session.setPreferences(
         _fromForm(session, latitude: coords.$1, longitude: coords.$2),
       );
-      if (!mounted) {
-        return;
+      if (mounted) {
+        router.push('/search-restaurants');
       }
-      if (error != null && error.isNotEmpty) {
-        showApiError(context, error);
-      }
-      router.push('/search-restaurants');
     } catch (error) {
       if (mounted) {
         showApiError(context, error);
       }
     } finally {
       if (mounted) {
-        setState(() => _busy = false);
+        setState(() => _searching = false);
       }
     }
   }
@@ -143,160 +175,489 @@ class _HomeScreenState extends State<HomeScreen> {
     context.push('/pick-restaurant');
   }
 
-  Future<void> _logout() async {
-    await SessionScope.of(context).logout();
-  }
-
-  @override
-  Widget build(BuildContext context) {
+  Future<void> _openAccount() async {
     final session = SessionScope.of(context);
-
-    return Scaffold(
-      appBar: AppBar(
-        title: const Text('Menu preferences'),
+    final name = session.username;
+    final confirmed = await showFcSheet<bool>(
+      context,
+      (sheetContext) => FcSheet(
+        title: 'Account',
+        body: name == null || name.isEmpty
+            ? 'You are signed in.'
+            : 'Signed in as $name.',
         actions: [
-          IconButton(
-            tooltip: 'Saved',
-            onPressed: () => context.push('/saved'),
-            icon: const Icon(Icons.bookmark_border),
+          FcButton(
+            label: 'Cancel',
+            large: true,
+            variant: FcButtonVariant.secondary,
+            onPressed: () => Navigator.of(sheetContext).pop(false),
           ),
-          IconButton(
-            tooltip: 'Log out',
-            onPressed: _logout,
-            icon: const Icon(Icons.logout),
+          FcButton(
+            label: 'Log out',
+            large: true,
+            variant: FcButtonVariant.destructive,
+            onPressed: () => Navigator.of(sheetContext).pop(true),
           ),
-        ],
-      ),
-      body: Stack(
-        children: [
-          ListView(
-            padding: const EdgeInsets.fromLTRB(20, 8, 20, 32),
-            children: [
-              Text(
-                'Signed in as ${session.username ?? ''}',
-                style: Theme.of(context).textTheme.bodyMedium,
-              ),
-              const SizedBox(height: 8),
-              Text(
-                'Set macro targets, then search nearby restaurants or pick one on the map.',
-                style: Theme.of(context).textTheme.bodyLarge?.copyWith(
-                      color: Theme.of(context).colorScheme.onSurfaceVariant,
-                    ),
-              ),
-              const SizedBox(height: 20),
-              _SectionCard(
-                title: 'Macros',
-                hint: 'Optional targets. Leave blank for any.',
-                child: Wrap(
-                  spacing: 12,
-                  runSpacing: 12,
-                  children: [
-                    _MacroField(controller: _calories, label: 'Calories (kcal)'),
-                    _MacroField(controller: _proteins, label: 'Proteins (g)'),
-                    _MacroField(controller: _carbs, label: 'Carbs (g)'),
-                    _MacroField(controller: _fat, label: 'Fat (g)'),
-                    _MacroField(controller: _fiber, label: 'Fiber (g)'),
-                    _MacroField(controller: _sugar, label: 'Sugar (g)'),
-                  ],
-                ),
-              ),
-              _SectionCard(
-                title: 'Dietary restrictions',
-                child: Column(
-                  children: [
-                    SwitchListTile(
-                      contentPadding: EdgeInsets.zero,
-                      title: const Text('Halal'),
-                      value: _halal,
-                      onChanged: (value) => setState(() => _halal = value),
-                    ),
-                    SwitchListTile(
-                      contentPadding: EdgeInsets.zero,
-                      title: const Text('Kosher'),
-                      value: _kosher,
-                      onChanged: (value) => setState(() => _kosher = value),
-                    ),
-                  ],
-                ),
-              ),
-              _SectionCard(
-                title: 'Custom allergies',
-                hint: 'Comma-separated. Values are stored in lowercase.',
-                child: TextField(
-                  controller: _allergies,
-                  decoration: const InputDecoration(
-                    labelText: 'Allergies',
-                    hintText: 'e.g. peanuts, shellfish, garlic',
-                  ),
-                ),
-              ),
-              FilledButton(
-                onPressed: _busy ? null : _search,
-                child: const Text('Search restaurants'),
-              ),
-              const SizedBox(height: 12),
-              OutlinedButton(
-                onPressed: _busy ? null : _openMapPicker,
-                child: const Text('Check a specific restaurant'),
-              ),
-            ],
-          ),
-          if (_busy) LoadingBarrier(message: _busyMessage),
         ],
       ),
     );
+    if (confirmed == true) {
+      await session.logout();
+    }
   }
-}
 
-class _SectionCard extends StatelessWidget {
-  const _SectionCard({required this.title, required this.child, this.hint});
+  void _toggleAllergy(String key, bool selected) {
+    setState(() {
+      if (selected) {
+        if (!_allergies.contains(key)) {
+          _allergies = [..._allergies, key];
+        }
+      } else {
+        _allergies = _allergies.where((item) => item != key).toList();
+      }
+    });
+  }
 
-  final String title;
-  final String? hint;
-  final Widget child;
+  void _addAllergyFromInput() {
+    final added = _allergyInput.text
+        .split(',')
+        .map((item) => item.trim().toLowerCase())
+        .where((item) => item.isNotEmpty && !_allergies.contains(item));
+    if (added.isEmpty) {
+      _allergyInput.clear();
+      return;
+    }
+    setState(() {
+      _allergies = [..._allergies, ...added];
+      _allergyInput.clear();
+    });
+  }
+
+  String get _summaryLine {
+    final parts = <String>[];
+    final cal = _parse(_calories);
+    final protein = _parse(_proteins);
+    if (cal != null) {
+      parts.add('${fcNum(cal)} cal');
+    }
+    if (protein != null) {
+      parts.add('${fcNum(protein)} g protein');
+    }
+    final others = [_carbs, _fat, _fiber, _sugar]
+        .where((c) => _parse(c) != null)
+        .length;
+    if (others > 0) {
+      parts.add('+$others ${others == 1 ? 'target' : 'targets'}');
+    }
+    if (_halal) {
+      parts.add('Halal');
+    }
+    if (_kosher) {
+      parts.add('Kosher');
+    }
+    if (_allergies.isNotEmpty) {
+      parts.add(
+        '${_allergies.length} ${_allergies.length == 1 ? 'allergy' : 'allergies'}',
+      );
+    }
+    return parts.join(' · ');
+  }
 
   @override
   Widget build(BuildContext context) {
-    return Card(
-      margin: const EdgeInsets.only(bottom: 16),
-      child: Padding(
-        padding: const EdgeInsets.all(18),
+    final c = context.fc;
+    final canSearch = _hasAnyTarget;
+
+    return Scaffold(
+      backgroundColor: c.bg,
+      body: SafeArea(
         child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text(title, style: Theme.of(context).textTheme.titleMedium),
-            if (hint != null) ...[
-              const SizedBox(height: 4),
-              Text(
-                hint!,
-                style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                      color: Theme.of(context).colorScheme.onSurfaceVariant,
-                    ),
+            FcAppBar(
+              showBack: false,
+              titleWidget: const FcWordmark(),
+              actions: [
+                FcButton(
+                  label: 'Saved',
+                  variant: FcButtonVariant.ghost,
+                  iconOnly: true,
+                  icon: FcIcons.bookmark,
+                  onPressed: () => context.push('/saved'),
+                ),
+                FcButton(
+                  label: 'Account and log out',
+                  variant: FcButtonVariant.ghost,
+                  iconOnly: true,
+                  icon: FcIcons.user,
+                  onPressed: _openAccount,
+                ),
+              ],
+            ),
+            Expanded(
+              child: ListView(
+                padding: const EdgeInsets.fromLTRB(
+                  FcSpace.s4,
+                  FcSpace.s2,
+                  FcSpace.s4,
+                  FcSpace.s6,
+                ),
+                children: [
+                  _header(c),
+                  const SizedBox(height: FcSpace.s6),
+                  _macrosSection(c),
+                  const SizedBox(height: FcSpace.s6),
+                  _dietSection(c),
+                  const SizedBox(height: FcSpace.s6),
+                  _allergySection(c),
+                ],
               ),
-            ],
-            const SizedBox(height: 12),
-            child,
+            ),
+            _footer(c, canSearch),
           ],
         ),
       ),
     );
   }
-}
 
-class _MacroField extends StatelessWidget {
-  const _MacroField({required this.controller, required this.label});
+  Widget _header(FcColors c) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Semantics(
+          header: true,
+          child: Text(
+            _hadSaved ? 'Your preferences' : 'Set up your preferences',
+            style: FcText.title.copyWith(color: c.textPrimary),
+          ),
+        ),
+        const SizedBox(height: FcSpace.s1),
+        if (_hadSaved)
+          Row(
+            children: [
+              FcIcon(FcIcons.check, size: 16, color: c.textSecondary),
+              const SizedBox(width: 6),
+              Flexible(
+                child: Text(
+                  'Saved. We use these for every search.',
+                  style: FcText.bodySm.copyWith(color: c.textSecondary),
+                ),
+              ),
+            ],
+          )
+        else
+          Text(
+            "Add what you're aiming for. We rank places and dishes by how "
+            'close they get.',
+            style: FcText.bodySm.copyWith(color: c.textSecondary),
+          ),
+      ],
+    );
+  }
 
-  final TextEditingController controller;
-  final String label;
+  Widget _sectionTitle(FcColors c, String text) => Semantics(
+        header: true,
+        child: Text(text, style: FcText.heading.copyWith(color: c.textPrimary)),
+      );
 
-  @override
-  Widget build(BuildContext context) {
-    return SizedBox(
-      width: 150,
-      child: TextField(
-        controller: controller,
-        keyboardType: const TextInputType.numberWithOptions(decimal: true),
-        decoration: InputDecoration(labelText: label, hintText: 'Any'),
+  Widget _macrosSection(FcColors c) {
+    final rows = <(String, TextEditingController, String)>[
+      ('Calories', _calories, 'cal'),
+      ('Protein', _proteins, 'g'),
+      ('Carbs', _carbs, 'g'),
+      ('Fat', _fat, 'g'),
+      ('Fiber', _fiber, 'g'),
+      ('Sugar', _sugar, 'g'),
+    ];
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Wrap(
+          alignment: WrapAlignment.spaceBetween,
+          crossAxisAlignment: WrapCrossAlignment.center,
+          runSpacing: FcSpace.s3,
+          children: [
+            _sectionTitle(c, 'Macro targets'),
+            SizedBox(
+              width: 196,
+              child: FcSeg(
+                options: const ['Per meal', 'Per day'],
+                selectedIndex: _targetsPer == 'day' ? 1 : 0,
+                semanticLabel: 'Targets apply',
+                onChanged: (index) => setState(
+                  () => _targetsPer = index == 1 ? 'day' : 'meal',
+                ),
+              ),
+            ),
+          ],
+        ),
+        const SizedBox(height: FcSpace.s3),
+        FcCard(
+          clip: true,
+          child: Column(
+            children: [
+              for (var i = 0; i < rows.length; i++) ...[
+                if (i > 0) Divider(color: c.border, height: 1, thickness: 1),
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(
+                    FcSpace.s4,
+                    FcSpace.s2,
+                    FcSpace.s2,
+                    FcSpace.s2,
+                  ),
+                  child: Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      ExcludeSemantics(
+                        child: Text(
+                          rows[i].$1,
+                          style: FcText.body.copyWith(
+                            fontWeight: FontWeight.w600,
+                            color: c.textPrimary,
+                          ),
+                        ),
+                      ),
+                      FcNumberField(
+                        controller: rows[i].$2,
+                        unit: rows[i].$3,
+                        semanticLabel: rows[i].$1,
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ],
+          ),
+        ),
+        const SizedBox(height: FcSpace.s3),
+        Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Padding(
+              padding: const EdgeInsets.only(top: 1),
+              child: FcIcon(FcIcons.info, size: 16, color: c.textSecondary),
+            ),
+            const SizedBox(width: FcSpace.s2),
+            Expanded(
+              child: Text(
+                'Leave a field as Any to skip it. Macros for each dish are '
+                'estimates.',
+                style: FcText.caption.copyWith(
+                  fontWeight: FontWeight.w400,
+                  color: c.textSecondary,
+                ),
+              ),
+            ),
+          ],
+        ),
+      ],
+    );
+  }
+
+  Widget _dietRow(
+    FcColors c, {
+    required String title,
+    required String description,
+    required bool value,
+    required ValueChanged<bool> onChanged,
+  }) {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(
+        FcSpace.s4,
+        FcSpace.s3,
+        FcSpace.s3,
+        FcSpace.s3,
+      ),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+        children: [
+          Expanded(
+            child: ExcludeSemantics(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    title,
+                    style: FcText.body.copyWith(
+                      fontWeight: FontWeight.w600,
+                      color: c.textPrimary,
+                    ),
+                  ),
+                  Text(
+                    description,
+                    style: FcText.bodySm.copyWith(color: c.textSecondary),
+                  ),
+                ],
+              ),
+            ),
+          ),
+          const SizedBox(width: FcSpace.s3),
+          FcSwitch(
+            value: value,
+            onChanged: onChanged,
+            semanticLabel: title,
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _dietSection(FcColors c) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        _sectionTitle(c, 'Dietary'),
+        const SizedBox(height: FcSpace.s3),
+        FcCard(
+          clip: true,
+          child: Column(
+            children: [
+              _dietRow(
+                c,
+                title: 'Halal',
+                description: 'Only places that serve halal',
+                value: _halal,
+                onChanged: (value) => setState(() => _halal = value),
+              ),
+              Divider(color: c.border, height: 1, thickness: 1),
+              _dietRow(
+                c,
+                title: 'Kosher',
+                description: 'Only places that serve kosher',
+                value: _kosher,
+                onChanged: (value) => setState(() => _kosher = value),
+              ),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _allergySection(FcColors c) {
+    final commonKeys = _commonAllergies.map((item) => item.$1).toSet();
+    final custom = _allergies.where((item) => !commonKeys.contains(item));
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        _sectionTitle(c, 'Allergies'),
+        const SizedBox(height: FcSpace.s1),
+        Text(
+          'We hide dishes that list these. Tap to add or remove.',
+          style: FcText.bodySm.copyWith(color: c.textSecondary),
+        ),
+        const SizedBox(height: FcSpace.s3),
+        Container(
+          constraints: const BoxConstraints(minHeight: 48),
+          padding: const EdgeInsets.only(left: FcSpace.s3, right: FcSpace.s1),
+          decoration: BoxDecoration(
+            color: c.surfaceRaised,
+            borderRadius: BorderRadius.circular(FcRadius.input),
+            border: Border.all(color: c.borderStrong),
+          ),
+          child: Row(
+            children: [
+              Expanded(
+                child: Semantics(
+                  textField: true,
+                  label: 'Add an allergy',
+                  child: TextField(
+                    controller: _allergyInput,
+                    textInputAction: TextInputAction.done,
+                    onSubmitted: (_) => _addAllergyFromInput(),
+                    cursorColor: c.accent,
+                    style: FcText.body.copyWith(color: c.textPrimary),
+                    decoration: InputDecoration(
+                      isCollapsed: true,
+                      filled: false,
+                      border: InputBorder.none,
+                      enabledBorder: InputBorder.none,
+                      focusedBorder: InputBorder.none,
+                      contentPadding:
+                          const EdgeInsets.symmetric(vertical: 12),
+                      hintText: 'Add another, like sesame',
+                      hintStyle: FcText.body.copyWith(color: c.textSecondary),
+                    ),
+                  ),
+                ),
+              ),
+              FcButton(
+                label: 'Add',
+                variant: FcButtonVariant.ghost,
+                onPressed: _addAllergyFromInput,
+              ),
+            ],
+          ),
+        ),
+        const SizedBox(height: FcSpace.s3),
+        Wrap(
+          spacing: FcSpace.s2,
+          runSpacing: FcSpace.s2,
+          children: [
+            for (final (key, label, icon) in _commonAllergies)
+              FcFilterChip(
+                label: label,
+                icon: icon,
+                selected: _allergies.contains(key),
+                onSelected: (selected) => _toggleAllergy(key, selected),
+              ),
+            for (final key in custom)
+              FcFilterChip(
+                label: _capitalize(key),
+                selected: true,
+                onSelected: (selected) => _toggleAllergy(key, selected),
+              ),
+          ],
+        ),
+      ],
+    );
+  }
+
+  Widget _footer(FcColors c, bool canSearch) {
+    return Container(
+      padding: const EdgeInsets.fromLTRB(
+        FcSpace.s4,
+        FcSpace.s4,
+        FcSpace.s4,
+        FcSpace.s4,
+      ),
+      decoration: BoxDecoration(
+        color: c.surfaceRaised,
+        border: Border(top: BorderSide(color: c.border)),
+      ),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Padding(
+            padding: const EdgeInsets.only(bottom: FcSpace.s2),
+            child: Text(
+              canSearch
+                  ? _summaryLine
+                  : 'Add a target or a dietary filter to search.',
+              textAlign: TextAlign.center,
+              style: FcText.tabular(FcText.caption).copyWith(
+                color: c.textSecondary,
+              ),
+            ),
+          ),
+          FcButton(
+            label: 'Search restaurants',
+            large: true,
+            block: true,
+            icon: FcIcons.magnifyingGlass,
+            loading: _searching,
+            onPressed: canSearch && !_searching ? _search : null,
+          ),
+          const SizedBox(height: FcSpace.s2),
+          FcButton(
+            label: 'Check a specific restaurant',
+            large: true,
+            block: true,
+            variant: FcButtonVariant.secondary,
+            icon: FcIcons.storefront,
+            onPressed: _searching ? null : _openMapPicker,
+          ),
+        ],
       ),
     );
   }

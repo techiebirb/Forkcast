@@ -10,10 +10,13 @@ import 'config.dart';
 import 'models.dart';
 
 class ApiException implements Exception {
-  ApiException(this.message, {this.statusCode});
+  ApiException(this.message, {this.statusCode, this.suggestions = const []});
 
   final String message;
   final int? statusCode;
+
+  /// Free usernames the server offers when a signup name is already taken.
+  final List<String> suggestions;
 
   @override
   String toString() => message;
@@ -479,6 +482,9 @@ class ApiClient {
       throw ApiException(
         _messageFrom(data) ?? 'Request failed.',
         statusCode: response.statusCode,
+        suggestions: (data['suggestions'] as List<dynamic>? ?? [])
+            .map((item) => item.toString())
+            .toList(),
       );
     }
     return (data['username'] ?? '').toString();

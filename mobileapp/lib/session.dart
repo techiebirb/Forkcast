@@ -190,6 +190,21 @@ class SessionController extends ChangeNotifier {
     return result.error;
   }
 
+  /// Gets the Check screen ready to load [restaurant]: clears the previous
+  /// menu and points the preferences at it. Keeps the restaurant in the
+  /// remembered list (without reordering it if it is already there) so the
+  /// header has its address and links while the menu loads.
+  void beginCheck(RestaurantRecommendation restaurant) {
+    final cleaned = restaurant.name.trim();
+    menuItems = [];
+    preferences = preferences.copyWith(restaurantName: cleaned);
+    if (cleaned.isNotEmpty &&
+        !restaurants.any((item) => item.name.trim() == cleaned)) {
+      restaurants = [restaurant, ...restaurants];
+    }
+    notifyListeners();
+  }
+
   void setPreferences(UserPreferences next) {
     preferences = next;
     notifyListeners();

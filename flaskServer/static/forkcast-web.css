@@ -1,0 +1,105 @@
+/* Web-only layout for the Forkcast pages. Tokens and components come from
+ * forkcast.css (generated from the design system); nothing here redefines them. */
+
+*, *::before, *::after { box-sizing: border-box; }
+h1, h2, h3, p, dl, dd, ul, ol, figure { margin: 0; }
+ul, ol { padding: 0; list-style: none; }
+button { font: inherit; }
+a { color: var(--accent); }
+a:hover { color: var(--accent-pressed); }
+
+/* A phone-width column, centered on larger screens. */
+.fw-page { max-width: 40rem; min-height: 100vh; min-height: 100dvh; margin: 0 auto; display: flex; flex-direction: column; background: var(--bg); }
+.fw-main { flex: 1 1 auto; display: flex; flex-direction: column; gap: var(--space-6); padding: var(--space-2) var(--space-4) var(--space-6); }
+.fw-stack { display: flex; flex-direction: column; gap: var(--space-3); }
+.fw-stack--tight { gap: var(--space-2); }
+.fw-row { display: flex; align-items: center; gap: var(--space-2); }
+.fw-wrap { display: flex; flex-wrap: wrap; gap: var(--space-2); }
+
+/* Type roles from the design's scale. */
+.fw-display { font-size: 2rem; line-height: 2.5rem; font-weight: 700; letter-spacing: -0.02em; }
+.fw-title { font-size: 1.5rem; line-height: 2rem; font-weight: 700; letter-spacing: -0.01em; }
+.fw-heading { font-size: 1.125rem; line-height: 1.5rem; font-weight: 600; }
+.fw-body { font-size: 1rem; line-height: 1.5rem; }
+.fw-sm { font-size: 0.875rem; line-height: 1.25rem; }
+.fw-muted { color: var(--text-secondary); }
+.fw-strong { font-weight: 600; }
+.fw-wordmark { display: inline-flex; align-items: center; gap: var(--space-2); font-size: 1.25rem; line-height: 1.75rem; font-weight: 700; letter-spacing: -0.01em; color: var(--text-primary); text-decoration: none; }
+.fw-icon-line { display: flex; align-items: flex-start; gap: 6px; font-size: 0.875rem; line-height: 1.25rem; color: var(--text-secondary); }
+.fw-icon-line .ph { margin-top: 2px; }
+
+/* Buttons rendered as links get the same look as <button>. */
+a.fc-btn { text-decoration: none; }
+a.fc-btn--primary { color: var(--on-accent); }
+a.fc-btn--primary:hover { color: var(--on-accent); }
+a.fc-btn--secondary { color: var(--text-primary); }
+a.fc-btn--secondary:hover { color: var(--text-primary); }
+a.fc-btn--ghost { color: var(--accent); }
+a.fc-btn--ghost.fc-btn--icon { color: var(--text-secondary); }
+.fc-btn:disabled, .fc-btn[aria-disabled="true"] { background: var(--surface-sunken); color: var(--text-disabled); border-color: transparent; cursor: not-allowed; }
+.fc-btn { -webkit-tap-highlight-color: transparent; }
+
+/* Auth pages. */
+.fw-auth { flex: 1 1 auto; display: flex; flex-direction: column; padding: var(--space-12) var(--space-4) var(--space-8); }
+.fw-auth__head { margin-top: 4.5rem; display: flex; flex-direction: column; gap: var(--space-2); }
+.fw-auth__form { margin-top: var(--space-8); display: flex; flex-direction: column; gap: var(--space-4); }
+.fw-auth__foot { margin-top: auto; padding-top: var(--space-6); display: flex; flex-wrap: wrap; justify-content: center; align-items: center; font-size: 0.875rem; line-height: 1.25rem; color: var(--text-secondary); }
+.fw-auth__foot a { display: inline-flex; align-items: center; min-height: 2.75rem; padding: 0 var(--space-2); font-weight: 600; text-decoration: none; }
+
+/* Form fields. */
+.fw-field { display: flex; flex-direction: column; gap: var(--space-2); }
+.fw-field > label { font-size: 0.875rem; line-height: 1.25rem; font-weight: 600; }
+.fa-input .fc-link { flex: none; }
+.fa-input input[type="number"] { -moz-appearance: textfield; appearance: textfield; }
+.fa-input input[type="number"]::-webkit-outer-spin-button, .fa-input input[type="number"]::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
+.fw-error-text { display: flex; align-items: flex-start; gap: var(--space-2); font-size: 0.875rem; line-height: 1.25rem; font-weight: 600; color: var(--danger); }
+.fw-error-text .ph { margin-top: 2px; }
+select.fw-select { width: 100%; min-height: 3rem; padding: 0 var(--space-3); border-radius: var(--radius-input); background: var(--surface-raised); border: 1px solid var(--border-strong); color: var(--text-primary); font: inherit; font-size: 1rem; }
+
+/* Inline alert for form-level errors. */
+.fw-alert { display: flex; align-items: flex-start; gap: var(--space-2); padding: var(--space-3); border-radius: var(--radius-input); background: var(--danger-soft); color: var(--danger); font-size: 0.875rem; line-height: 1.25rem; }
+.fw-alert .ph { margin-top: 1px; }
+.fw-alert strong { font-weight: 700; }
+
+/* Chips and segmented options that are real inputs. */
+.fc-chip:has(input:checked) { background: var(--accent-soft); border-color: var(--accent); color: var(--accent-pressed); }
+.fc-chip:has(input:focus-visible) { outline: 2px solid var(--focus); outline-offset: 2px; }
+.fc-chip { position: relative; }
+.fc-chip input { position: absolute; opacity: 0; inset: 0; margin: 0; cursor: pointer; }
+.fc-seg__opt:has(input:checked) { background: var(--surface-raised); color: var(--text-primary); box-shadow: inset 0 0 0 1px var(--border-strong); }
+
+/* Home: macro rows, diet rows, footer bar. */
+.fw-form { flex: 1 1 auto; display: flex; flex-direction: column; }
+[hidden] { display: none !important; }
+.fw-card-list > * + * { border-top: 1px solid var(--border); }
+.fw-macro-row { display: flex; align-items: center; justify-content: space-between; gap: var(--space-3); padding: var(--space-2) var(--space-2) var(--space-2) var(--space-4); }
+.fw-macro-row label { font-size: 1rem; line-height: 1.5rem; font-weight: 600; }
+.fw-macro-row .fa-input { width: 9.25rem; }
+.fw-diet-row { display: flex; align-items: center; justify-content: space-between; gap: var(--space-3); padding: var(--space-3) var(--space-3) var(--space-3) var(--space-4); }
+.fw-diet-row p:first-child { font-size: 1rem; line-height: 1.5rem; font-weight: 600; }
+.fw-footer { position: sticky; bottom: 0; z-index: 5; display: flex; flex-direction: column; gap: var(--space-2); padding: var(--space-4); background: var(--surface-raised); border-top: 1px solid var(--border); }
+.fw-footer__summary { text-align: center; font-size: 0.8125rem; line-height: 1.125rem; font-weight: 500; color: var(--text-secondary); font-variant-numeric: tabular-nums; }
+.fw-section-head { display: flex; align-items: center; justify-content: space-between; gap: var(--space-3); flex-wrap: wrap; }
+.fw-section-head .fc-seg { width: 12.25rem; }
+
+/* Results and cards. */
+.fw-card-pad { padding: var(--space-4); display: flex; flex-direction: column; gap: 0.625rem; }
+.fw-dish__top { display: flex; align-items: baseline; justify-content: space-between; gap: var(--space-3); }
+.fw-dish__name { font-size: 1rem; line-height: 1.5rem; font-weight: 600; }
+.fw-dish__price { font-size: 1rem; font-weight: 600; font-variant-numeric: tabular-nums; }
+.fw-verdict { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); font-size: 0.875rem; line-height: 1.25rem; }
+.fw-tag-conflict { background: var(--danger-soft); color: var(--danger); }
+.fw-details { border: 1px solid var(--border); border-radius: var(--radius-card); background: var(--surface); }
+.fw-details summary { display: flex; align-items: center; justify-content: space-between; min-height: 2.75rem; padding: 0 var(--space-4); font-weight: 600; cursor: pointer; list-style: none; }
+.fw-details summary::-webkit-details-marker { display: none; }
+.fw-details[open] summary { border-bottom: 1px solid var(--border); }
+.fw-details__body { display: flex; flex-direction: column; gap: var(--space-3); padding: var(--space-4); }
+.fc-rcard__main form { margin: 0; }
+.fc-state__body { margin-left: auto; margin-right: auto; }
+
+/* Loading view that replaces the page while the AI works. */
+.fw-loading { display: flex; flex-direction: column; gap: var(--space-4); }
+.fw-loading__head { display: flex; align-items: flex-start; gap: var(--space-3); }
+.fw-loading .fc-spinner { color: var(--accent); margin-top: 3px; flex: none; }
+
+.fw-note { margin-top: calc(-1 * var(--space-2)); }

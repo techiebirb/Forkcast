@@ -1,33 +1,91 @@
-<!DOCTYPE html>
-<html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Sign up</title>
-    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
-    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
-</head>
-<body>
-    <main class="page">
-        <h1>Sign up</h1>
-        <p class="lede">Create a username and password. You will be signed in after signing up.</p>
+{% extends "base.html" %}
+{% block title %}Create an account · Forkcast{% endblock %}
 
-        {% if error %}
-        <div class="banner error">{{ error }}</div>
+{% block body %}
+{% set taken = username_taken is defined and username_taken %}
+<main class="fw-auth">
+    <p class="fw-wordmark">Forkcast</p>
+
+    <div class="fw-auth__head">
+        <h1 class="fw-display">Create an account</h1>
+        <p class="fw-body fw-muted">Save your targets once and use them at every restaurant.</p>
+    </div>
+
+    <form class="fw-auth__form" method="post" action="{{ url_for('api_signup') }}" aria-label="Create an account">
+        {% if error and not taken %}
+        <div class="fw-alert" role="alert">
+            <i class="ph ph-warning" style="font-size: 20px" aria-hidden="true"></i>
+            <p><strong>{{ error }}</strong></p>
+        </div>
         {% endif %}
 
-        <form class="card auth-form" method="post" action="{{ url_for('api_signup') }}">
-            <label class="stack">Username
-                <input type="text" name="username" autocomplete="username" required minlength="3">
-            </label>
-            <label class="stack">Password
-                <input type="password" name="password" autocomplete="new-password" required minlength="4">
-            </label>
-            <div class="actions">
-                <button class="primary" type="submit">Create account</button>
+        <div class="fw-field">
+            <label for="su-user">Username</label>
+            <div class="fa-input{% if taken %} is-error{% endif %}">
+                <input id="su-user" type="text" name="username" autocomplete="username" required minlength="3"
+                    value="{{ username or '' }}"
+                    aria-describedby="su-user-note"
+                    {% if taken %}aria-invalid="true"{% endif %}>
             </div>
-        </form>
-        <p>Already have an account? <a href="{{ url_for('login_page') }}">Log in</a></p>
-    </main>
-</body>
-</html>
+            {% if taken %}
+            <p class="fw-error-text" id="su-user-note" role="alert">
+                <i class="ph ph-warning" style="font-size: 16px" aria-hidden="true"></i>
+                <span>That username is taken. Try one of these or add a number.</span>
+            </p>
+            {% if suggestions %}
+            <div class="fc-chiprow" role="group" aria-label="Available usernames">
+                {% for name in suggestions %}
+                <button type="button" class="fc-chip" data-fill-username="{{ name }}">{{ name }}</button>
+                {% endfor %}
+            </div>
+            {% endif %}
+            {% else %}
+            <p class="fc-field__hint" id="su-user-note">
+                <i class="ph ph-info fc-icon" style="font-size: 16px" aria-hidden="true"></i>
+                <span>At least 3 characters</span>
+            </p>
+            {% endif %}
+        </div>
+
+        <div class="fw-field">
+            <label for="su-pass">Password</label>
+            <div class="fa-input">
+                <input id="su-pass" type="password" name="password" autocomplete="new-password" required minlength="4"
+                    aria-describedby="su-pass-note">
+                <button type="button" class="fc-link" data-toggle-password="su-pass" aria-label="Show password">Show</button>
+            </div>
+            <p class="fc-field__hint" id="su-pass-note">
+                <i class="ph ph-info fc-icon" style="font-size: 16px" aria-hidden="true"></i>
+                <span>At least 4 characters</span>
+            </p>
+        </div>
+
+        <button class="fc-btn fc-btn--primary fc-btn--lg fc-btn--block" type="submit" style="margin-top: 8px;">
+            <span class="fc-btn__label">Create account</span>
+        </button>
+    </form>
+
+    <p class="fw-auth__foot">Already have an account?<a href="{{ url_for('login_page') }}">Log in</a></p>
+</main>
+{% endblock %}
+
+{% block scripts %}
+<script>
+    document.querySelectorAll("[data-toggle-password]").forEach(function (button) {
+        button.addEventListener("click", function () {
+            var input = document.getElementById(button.dataset.togglePassword);
+            var hidden = input.type === "password";
+            input.type = hidden ? "text" : "password";
+            button.textContent = hidden ? "Hide" : "Show";
+            button.setAttribute("aria-label", hidden ? "Hide password" : "Show password");
+        });
+    });
+    document.querySelectorAll("[data-fill-username]").forEach(function (chip) {
+        chip.addEventListener("click", function () {
+            var input = document.getElementById("su-user");
+            input.value = chip.dataset.fillUsername;
+            input.focus();
+        });
+    });
+</script>
+{% endblock %}

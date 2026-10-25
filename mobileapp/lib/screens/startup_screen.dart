@@ -3,7 +3,11 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 
 import '../app.dart';
-import '../app_theme.dart';
+import '../theme/fc_tokens.dart';
+import '../widgets/fc_button.dart';
+import '../widgets/fc_icons.dart';
+import '../widgets/fc_logo.dart';
+import '../widgets/fc_surfaces.dart';
 
 /// Shown while the app connects to the server. On Render's free tier a sleeping
 /// server takes about a minute to wake up, so we explain the wait.
@@ -16,6 +20,7 @@ class StartupScreen extends StatefulWidget {
 
 class _StartupScreenState extends State<StartupScreen> {
   static const _expectedSeconds = 60;
+  static const _longWaitSeconds = 90;
 
   final Stopwatch _clock = Stopwatch()..start();
   Timer? _tick;
@@ -43,25 +48,39 @@ class _StartupScreenState extends State<StartupScreen> {
     final error = session.startupError;
 
     return Scaffold(
+      backgroundColor: context.fc.bg,
       body: SafeArea(
         child: Center(
-          child: Padding(
-            padding: const EdgeInsets.all(32),
+          child: SingleChildScrollView(
+            padding: const EdgeInsets.all(FcSpace.s8),
             child: ConstrainedBox(
               constraints: const BoxConstraints(maxWidth: 420),
-              child: error != null
-                  ? _ErrorView(
-                      message: error,
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  const _Brand(),
+                  const SizedBox(height: 40),
+                  if (error != null)
+                    _ErrorView(
                       onRetry: () {
                         _clock.reset();
                         session.retryStartup();
                       },
                     )
-                  : ValueListenableBuilder<bool>(
+                  else
+                    ValueListenableBuilder<bool>(
                       valueListenable: session.api.serverWaking,
-                      builder: (context, waking, _) =>
-                          _WakingView(waking: waking, seconds: seconds),
+                      builder: (context, waking, _) => waking
+                          ? _WakingView(
+                              seconds: seconds,
+                              progress: (seconds / _expectedSeconds)
+                                  .clamp(0.0, 0.95),
+                              longWait: seconds > _longWaitSeconds,
+                            )
+                          : const _ConnectingView(),
                     ),
+                ],
+              ),
             ),
           ),
         ),
@@ -70,73 +89,159 @@ class _StartupScreenState extends State<StartupScreen> {
   }
 }
 
-class _WakingView extends StatelessWidget {
-  const _WakingView({required this.waking, required this.seconds});
-
-  final bool waking;
-  final int seconds;
+class _Brand extends StatelessWidget {
+  const _Brand();
 
   @override
   Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    final title = waking ? 'Waking up the server…' : 'Connecting…';
-    final body = !waking
-        ? 'Getting things ready.'
-        : seconds > 90
-            ? 'Still working on it. Thanks for your patience.'
-            : 'Forkcast runs on a free server that naps when nobody is using '
-                'it. Waking it up usually takes about a minute.';
-
     return Column(
       mainAxisSize: MainAxisSize.min,
       children: [
-        const Icon(Icons.restaurant_menu, size: 56, color: kAccent),
-        const SizedBox(height: 8),
+        const FcLogoMark(size: 56),
+        const SizedBox(height: FcSpace.s3),
         Text(
           'Forkcast',
-          style: theme.textTheme.headlineMedium?.copyWith(
-            color: kInk,
-            fontWeight: FontWeight.bold,
-          ),
+          style: FcText.display.copyWith(color: context.fc.textPrimary),
         ),
-        const SizedBox(height: 32),
-        Text(title, style: theme.textTheme.titleMedium),
-        const SizedBox(height: 12),
-        Text(body, textAlign: TextAlign.center),
-        const SizedBox(height: 24),
-        if (waking) ...[
-          LinearProgressIndicator(
-            value: (seconds / _StartupScreenState._expectedSeconds)
-                .clamp(0.0, 0.95),
-            minHeight: 6,
-            borderRadius: BorderRadius.circular(3),
-          ),
-          const SizedBox(height: 8),
-          Text('${seconds}s', style: theme.textTheme.bodySmall),
-        ] else
-          const CircularProgressIndicator(),
       ],
     );
   }
 }
 
-class _ErrorView extends StatelessWidget {
-  const _ErrorView({required this.message, required this.onRetry});
+class _ConnectingView extends StatelessWidget {
+  const _ConnectingView();
 
-  final String message;
+  @override
+  Widget build(BuildContext context) {
+    final c = context.fc;
+    return Semantics(
+      liveRegion: true,
+      container: true,
+      label: 'Connecting. Getting things ready.',
+      child: ExcludeSemantics(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            FcSpinner(size: 24, color: c.accent),
+            const SizedBox(height: FcSpace.s3),
+            Text(
+              'Connecting…',
+              textAlign: TextAlign.center,
+              style: FcText.heading.copyWith(color: c.textPrimary),
+            ),
+            const SizedBox(height: FcSpace.s3),
+            Text(
+              'Getting things ready.',
+              textAlign: TextAlign.center,
+              style: FcText.bodySm.copyWith(color: c.textSecondary),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _WakingView extends StatelessWidget {
+  const _WakingView({
+    required this.seconds,
+    required this.progress,
+    required this.longWait,
+  });
+
+  final int seconds;
+  final double progress;
+  final bool longWait;
+
+  @override
+  Widget build(BuildContext context) {
+    final c = context.fc;
+    final body = longWait
+        ? 'Still working on it. Thanks for your patience.'
+        : 'Forkcast runs on a free server that naps when nobody is using it. '
+            'Waking it up usually takes about a minute.';
+    return Semantics(
+      liveRegion: true,
+      container: true,
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Text(
+            'Waking up the server…',
+            textAlign: TextAlign.center,
+            style: FcText.heading.copyWith(color: c.textPrimary),
+          ),
+          const SizedBox(height: FcSpace.s3),
+          Text(
+            body,
+            textAlign: TextAlign.center,
+            style: FcText.bodySm.copyWith(color: c.textSecondary),
+          ),
+          const SizedBox(height: FcSpace.s6),
+          FcProgressBar(value: progress, semanticLabel: 'Waking up the server'),
+          const SizedBox(height: FcSpace.s3),
+          Semantics(
+            label: '$seconds seconds',
+            excludeSemantics: true,
+            child: Text(
+              '${seconds}s',
+              style: FcText.tabular(FcText.caption).copyWith(
+                color: c.textSecondary,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _ErrorView extends StatelessWidget {
+  const _ErrorView({required this.onRetry});
+
   final VoidCallback onRetry;
 
   @override
   Widget build(BuildContext context) {
-    return Column(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        const Icon(Icons.cloud_off, size: 56, color: kAccent),
-        const SizedBox(height: 16),
-        Text(message, textAlign: TextAlign.center),
-        const SizedBox(height: 24),
-        FilledButton(onPressed: onRetry, child: const Text('Try again')),
-      ],
+    final c = context.fc;
+    return Semantics(
+      liveRegion: true,
+      container: true,
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Container(
+            width: 56,
+            height: 56,
+            decoration: BoxDecoration(
+              shape: BoxShape.circle,
+              color: c.dangerSoft,
+            ),
+            child: Center(
+              child: FcIcon(FcIcons.cloudOff, size: 24, color: c.danger),
+            ),
+          ),
+          const SizedBox(height: FcSpace.s3),
+          Text(
+            "Couldn't reach Forkcast.",
+            textAlign: TextAlign.center,
+            style: FcText.heading.copyWith(color: c.textPrimary),
+          ),
+          const SizedBox(height: FcSpace.s3),
+          Text(
+            'Check your connection and try again.',
+            textAlign: TextAlign.center,
+            style: FcText.bodySm.copyWith(color: c.textSecondary),
+          ),
+          const SizedBox(height: FcSpace.s6),
+          FcButton(
+            label: 'Try again',
+            large: true,
+            block: true,
+            onPressed: onRetry,
+          ),
+        ],
+      ),
     );
   }
 }

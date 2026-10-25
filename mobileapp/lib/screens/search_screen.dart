@@ -3,6 +3,15 @@ import 'package:go_router/go_router.dart';
 
 import '../app.dart';
 import '../models.dart';
+import '../session.dart';
+import '../theme/fc_tokens.dart';
+import '../widgets/fc_button.dart';
+import 'check_screen.dart';
+import '../widgets/fc_cards.dart';
+import '../widgets/fc_icons.dart';
+import '../widgets/fc_surfaces.dart';
+
+enum _SearchPhase { loading, results, empty, error }
 
 class SearchScreen extends StatefulWidget {
   const SearchScreen({super.key});
@@ -12,32 +21,42 @@ class SearchScreen extends StatefulWidget {
 }
 
 class _SearchScreenState extends State<SearchScreen> {
-  bool _busy = false;
+  _SearchPhase _phase = _SearchPhase.loading;
 
-  Future<void> _check(RestaurantRecommendation restaurant) async {
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addPostFrameCallback((_) => _search());
+  }
+
+  /// Runs the restaurant search with the preferences Home just stored.
+  Future<void> _search() async {
     final session = SessionScope.of(context);
-    final router = GoRouter.of(context);
-    setState(() => _busy = true);
+    setState(() => _phase = _SearchPhase.loading);
     try {
-      final error = await session.checkRestaurant(
-        session.preferences.copyWith(restaurantName: restaurant.name),
-      );
+      final error = await session.searchRestaurants(session.preferences);
       if (!mounted) {
         return;
       }
-      if (error != null && error.isNotEmpty) {
-        showApiError(context, error);
-      }
-      router.push('/check-restaurant');
-    } catch (error) {
+      setState(() {
+        if (error != null && error.isNotEmpty) {
+          _phase = _SearchPhase.error;
+        } else if (session.restaurants.isEmpty) {
+          _phase = _SearchPhase.empty;
+        } else {
+          _phase = _SearchPhase.results;
+        }
+      });
+    } catch (_) {
       if (mounted) {
-        showApiError(context, error);
-      }
-    } finally {
-      if (mounted) {
-        setState(() => _busy = false);
+        setState(() => _phase = _SearchPhase.error);
       }
     }
+  }
+
+  /// The Check screen loads the menu itself, so it can show its progress.
+  void _check(RestaurantRecommendation restaurant) {
+    context.push('/check-restaurant', extra: CheckRequest(restaurant));
   }
 
   Future<void> _toggleFavorite(RestaurantRecommendation restaurant) async {
@@ -50,169 +69,166 @@ class _SearchScreenState extends State<SearchScreen> {
     }
   }
 
+  void _editPreferences() => context.pop();
+
+  static String _orList(List<String> items) {
+    if (items.length <= 1) {
+      return items.join();
+    }
+    return '${items.sublist(0, items.length - 1).join(', ')} or ${items.last}';
+  }
+
+  String _loadingDetail(UserPreferences prefs) {
+    final diets = [
+      if (prefs.halal) 'halal',
+      if (prefs.kosher) 'kosher',
+    ].join(' and ');
+    final base = diets.isEmpty
+        ? 'Looking for places nearby'
+        : 'Looking for $diets spots nearby';
+    final avoid = prefs.allergies.isEmpty
+        ? ''
+        : ' and leaving out places that rely on ${_orList(prefs.allergies)}';
+    return '$base$avoid.';
+  }
+
   @override
   Widget build(BuildContext context) {
+    final c = context.fc;
     final session = SessionScope.of(context);
-    final restaurants = session.restaurants;
     final prefs = session.preferences;
+    final restaurants = session.restaurants;
 
     return Scaffold(
-      appBar: AppBar(title: const Text('Search restaurants')),
-      body: Stack(
-        children: [
-          ListView(
-            padding: const EdgeInsets.fromLTRB(20, 8, 20, 32),
-            children: [
-              Card(
-                child: Padding(
-                  padding: const EdgeInsets.all(18),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text('Saved preferences', style: Theme.of(context).textTheme.titleMedium),
-                      const SizedBox(height: 12),
-                      _PrefRow('Calories', prefs.calories?.toString() ?? 'Any'),
-                      _PrefRow('Proteins', prefs.proteins == null ? 'Any' : '${prefs.proteins} g'),
-                      _PrefRow('Carbs', prefs.carbs == null ? 'Any' : '${prefs.carbs} g'),
-                      _PrefRow('Fat', prefs.fat == null ? 'Any' : '${prefs.fat} g'),
-                      _PrefRow('Fiber', prefs.fiber == null ? 'Any' : '${prefs.fiber} g'),
-                      _PrefRow('Sugar', prefs.sugar == null ? 'Any' : '${prefs.sugar} g'),
-                      _PrefRow('Halal', prefs.halal ? 'Yes' : 'No'),
-                      _PrefRow('Kosher', prefs.kosher ? 'Yes' : 'No'),
-                      _PrefRow('Allergies', prefs.allergies.isEmpty ? 'None' : prefs.allergies.join(', ')),
-                      _PrefRow(
-                        'Location',
-                        (prefs.latitude != null && prefs.longitude != null)
-                            ? '${prefs.latitude}, ${prefs.longitude}'
-                            : 'Not provided',
-                      ),
-                    ],
-                  ),
+      backgroundColor: c.bg,
+      body: SafeArea(
+        child: Column(
+          children: [
+            const FcAppBar(
+              title: 'Places for you',
+              subtitle: 'Near you',
+              subtitleIcon: FcIcons.mapPin,
+            ),
+            Expanded(
+              child: ListView(
+                padding: const EdgeInsets.fromLTRB(
+                  FcSpace.s4,
+                  FcSpace.s1,
+                  FcSpace.s4,
+                  FcSpace.s6,
                 ),
+                children: [
+                  PrefSummaryCard(
+                    preferences: prefs,
+                    title: 'Matching your preferences',
+                    onEdit: _editPreferences,
+                  ),
+                  const SizedBox(height: FcSpace.s4),
+                  ..._body(c, prefs, restaurants, session),
+                ],
               ),
-              if (restaurants.isEmpty)
-                Card(
-                  child: Padding(
-                    padding: const EdgeInsets.all(18),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  List<Widget> _body(
+    FcColors c,
+    UserPreferences prefs,
+    List<RestaurantRecommendation> restaurants,
+    SessionController session,
+  ) {
+    switch (_phase) {
+      case _SearchPhase.loading:
+        return [
+          Semantics(
+            liveRegion: true,
+            container: true,
+            child: Padding(
+              padding: const EdgeInsets.symmetric(vertical: FcSpace.s1),
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Padding(
+                    padding: const EdgeInsets.only(top: 3),
+                    child: FcSpinner(color: c.accent),
+                  ),
+                  const SizedBox(width: FcSpace.s3),
+                  Expanded(
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        const _SkeletonLine(),
-                        const SizedBox(height: 10),
-                        const _SkeletonLine(width: 220),
-                        const SizedBox(height: 10),
-                        const _SkeletonLine(width: 160),
-                        const SizedBox(height: 16),
                         Text(
-                          'No restaurant results yet. Submit Search Restaurants from preferences.',
-                          style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                                color: Theme.of(context).colorScheme.onSurfaceVariant,
-                              ),
+                          'Finding places that fit your goals',
+                          style: FcText.body.copyWith(
+                            fontWeight: FontWeight.w600,
+                            color: c.textPrimary,
+                          ),
+                        ),
+                        Text(
+                          _loadingDetail(prefs),
+                          style: FcText.bodySm.copyWith(
+                            color: c.textSecondary,
+                          ),
                         ),
                       ],
                     ),
                   ),
-                )
-              else
-                ...restaurants.map(
-                  (restaurant) => Card(
-                    margin: const EdgeInsets.only(bottom: 14),
-                    child: Padding(
-                      padding: const EdgeInsets.all(18),
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Row(
-                            children: [
-                              Expanded(
-                                child: Text(
-                                  restaurant.name,
-                                  style: Theme.of(context).textTheme.titleLarge,
-                                ),
-                              ),
-                              IconButton(
-                                tooltip: session.isFavoriteRestaurant(restaurant.name)
-                                    ? 'Remove from favorites'
-                                    : 'Add to favorites',
-                                onPressed: () => _toggleFavorite(restaurant),
-                                icon: Icon(
-                                  session.isFavoriteRestaurant(restaurant.name)
-                                      ? Icons.star
-                                      : Icons.star_border,
-                                ),
-                              ),
-                            ],
-                          ),
-                          const SizedBox(height: 4),
-                          Text(
-                            [
-                              if (restaurant.cuisine.isNotEmpty) restaurant.cuisine,
-                              restaurant.address.isEmpty ? 'Address unavailable' : restaurant.address,
-                            ].join(' · '),
-                            style: Theme.of(context).textTheme.bodySmall,
-                          ),
-                          const SizedBox(height: 10),
-                          Text(restaurant.whyItMatches),
-                          if (restaurant.possibleIdeas.isNotEmpty) ...[
-                            const SizedBox(height: 8),
-                            Text(
-                              'What might work: ${restaurant.possibleIdeas}',
-                              style: Theme.of(context).textTheme.bodySmall,
-                            ),
-                          ],
-                          const SizedBox(height: 14),
-                          FilledButton(
-                            onPressed: _busy ? null : () => _check(restaurant),
-                            child: const Text('Check this restaurant'),
-                          ),
-                        ],
-                      ),
-                    ),
-                  ),
-                ),
-            ],
+                ],
+              ),
+            ),
           ),
-          if (_busy) const LoadingBarrier(message: 'Loading information...'),
-        ],
-      ),
-    );
-  }
-}
-
-class _PrefRow extends StatelessWidget {
-  const _PrefRow(this.label, this.value);
-
-  final String label;
-  final String value;
-
-  @override
-  Widget build(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 6),
-      child: Row(
-        children: [
-          SizedBox(width: 90, child: Text(label, style: Theme.of(context).textTheme.labelLarge)),
-          Expanded(child: Text(value)),
-        ],
-      ),
-    );
-  }
-}
-
-class _SkeletonLine extends StatelessWidget {
-  const _SkeletonLine({this.width});
-
-  final double? width;
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      height: 12,
-      width: width ?? double.infinity,
-      decoration: BoxDecoration(
-        color: const Color(0xFFE2D8C8),
-        borderRadius: BorderRadius.circular(8),
-      ),
-    );
+          const SizedBox(height: FcSpace.s4),
+          const ListState(kind: ListStateKind.loading, rows: 4),
+        ];
+      case _SearchPhase.error:
+        return [
+          FcCard(
+            child: ListState(
+              kind: ListStateKind.error,
+              title: "Couldn't load places",
+              body: 'Check your connection and try again.',
+              actionLabel: 'Try again',
+              onAction: _search,
+            ),
+          ),
+        ];
+      case _SearchPhase.empty:
+        return [
+          FcCard(
+            child: ListState(
+              kind: ListStateKind.empty,
+              title: 'Nothing matched nearby',
+              body: 'Try loosening your preferences, like raising your calorie '
+                  'target or skipping protein. Allergy filters always stay on.',
+              actionLabel: 'Edit preferences',
+              onAction: _editPreferences,
+            ),
+          ),
+        ];
+      case _SearchPhase.results:
+        return [
+          Text(
+            '${restaurants.length} ${restaurants.length == 1 ? 'place' : 'places'}'
+            ' · best fit first',
+            style: FcText.tabular(FcText.bodySm).copyWith(
+              fontWeight: FontWeight.w500,
+              color: c.textSecondary,
+            ),
+          ),
+          const SizedBox(height: FcSpace.s3),
+          for (var i = 0; i < restaurants.length; i++) ...[
+            if (i > 0) const SizedBox(height: FcSpace.s3),
+            RestaurantCard(
+              restaurant: restaurants[i],
+              favorite: session.isFavoriteRestaurant(restaurants[i].name),
+              onFavorite: () => _toggleFavorite(restaurants[i]),
+              onCheck: () => _check(restaurants[i]),
+            ),
+          ],
+        ];
+    }
   }
 }

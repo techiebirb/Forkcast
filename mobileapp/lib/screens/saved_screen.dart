@@ -4,6 +4,49 @@ import 'package:go_router/go_router.dart';
 import '../app.dart';
 import '../models.dart';
 import '../session.dart';
+import '../theme/fc_tokens.dart';
+import '../widgets/fc_button.dart';
+import '../widgets/fc_cards.dart';
+import '../widgets/fc_chips.dart';
+import '../widgets/fc_icons.dart';
+import '../widgets/fc_surfaces.dart';
+import '../widgets/fc_toggles.dart';
+import 'check_screen.dart';
+
+const _months = [
+  'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', //
+  'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec',
+];
+
+/// How long ago a history entry was checked: "just now", "5 min ago",
+/// "2 h ago", "Yesterday", "3 d ago", then a date like "Oct 18".
+String savedTimeLabel(DateTime? time, {DateTime? now}) {
+  if (time == null) {
+    return '';
+  }
+  final current = now ?? DateTime.now();
+  final local = time.toLocal();
+  final diff = current.difference(local);
+  if (diff.inMinutes < 1) {
+    return 'just now';
+  }
+  if (diff.inHours < 1) {
+    return '${diff.inMinutes} min ago';
+  }
+  if (diff.inHours < 24) {
+    return '${diff.inHours} h ago';
+  }
+  final today = DateTime(current.year, current.month, current.day);
+  final thatDay = DateTime(local.year, local.month, local.day);
+  final days = today.difference(thatDay).inDays;
+  if (days <= 1) {
+    return 'Yesterday';
+  }
+  if (days < 7) {
+    return '$days d ago';
+  }
+  return '${_months[local.month - 1]} ${local.day}';
+}
 
 class SavedScreen extends StatefulWidget {
   const SavedScreen({super.key});
@@ -13,20 +56,34 @@ class SavedScreen extends StatefulWidget {
 }
 
 class _SavedScreenState extends State<SavedScreen> {
-  bool _busy = false;
+  int _tab = 0;
+  bool _loading = true;
+  bool _failed = false;
 
   @override
   void initState() {
     super.initState();
-    WidgetsBinding.instance.addPostFrameCallback((_) async {
-      try {
-        await SessionScope.of(context).refreshSaved();
-      } catch (error) {
-        if (mounted) {
-          showApiError(context, error);
-        }
-      }
+    WidgetsBinding.instance.addPostFrameCallback((_) => _refresh());
+  }
+
+  Future<void> _refresh() async {
+    setState(() {
+      _loading = true;
+      _failed = false;
     });
+    try {
+      await SessionScope.of(context).refreshSaved();
+      if (mounted) {
+        setState(() => _loading = false);
+      }
+    } catch (_) {
+      if (mounted) {
+        setState(() {
+          _loading = false;
+          _failed = true;
+        });
+      }
+    }
   }
 
   Future<void> _run(Future<void> Function() action) async {
@@ -39,30 +96,8 @@ class _SavedScreenState extends State<SavedScreen> {
     }
   }
 
-  Future<void> _check(RestaurantRecommendation restaurant) async {
-    final session = SessionScope.of(context);
-    final router = GoRouter.of(context);
-    setState(() => _busy = true);
-    try {
-      final error = await session.checkRestaurant(
-        session.preferences.copyWith(restaurantName: restaurant.name),
-      );
-      if (!mounted) {
-        return;
-      }
-      if (error != null && error.isNotEmpty) {
-        showApiError(context, error);
-      }
-      router.push('/check-restaurant');
-    } catch (error) {
-      if (mounted) {
-        showApiError(context, error);
-      }
-    } finally {
-      if (mounted) {
-        setState(() => _busy = false);
-      }
-    }
+  void _check(RestaurantRecommendation restaurant) {
+    context.push('/check-restaurant', extra: CheckRequest(restaurant));
   }
 
   void _openHistory(HistoryEntry entry) {
@@ -72,19 +107,23 @@ class _SavedScreenState extends State<SavedScreen> {
 
   Future<void> _confirmClear() async {
     final session = SessionScope.of(context);
-    final confirmed = await showDialog<bool>(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('Clear history?'),
-        content: const Text('Your favorites will not be affected.'),
+    final confirmed = await showFcSheet<bool>(
+      context,
+      (sheetContext) => FcSheet(
+        title: 'Clear history?',
+        body: 'Your favorites will not be affected.',
         actions: [
-          TextButton(
-            onPressed: () => Navigator.of(context).pop(false),
-            child: const Text('Cancel'),
+          FcButton(
+            label: 'Cancel',
+            large: true,
+            variant: FcButtonVariant.secondary,
+            onPressed: () => Navigator.of(sheetContext).pop(false),
           ),
-          TextButton(
-            onPressed: () => Navigator.of(context).pop(true),
-            child: const Text('Clear'),
+          FcButton(
+            label: 'Clear',
+            large: true,
+            variant: FcButtonVariant.destructive,
+            onPressed: () => Navigator.of(sheetContext).pop(true),
           ),
         ],
       ),
@@ -94,232 +133,389 @@ class _SavedScreenState extends State<SavedScreen> {
     }
   }
 
-  String _ago(DateTime? time) {
-    if (time == null) {
-      return '';
-    }
-    final diff = DateTime.now().difference(time);
-    if (diff.inMinutes < 1) {
-      return 'just now';
-    }
-    if (diff.inHours < 1) {
-      return '${diff.inMinutes} min ago';
-    }
-    if (diff.inDays < 1) {
-      return '${diff.inHours} h ago';
-    }
-    return '${diff.inDays} d ago';
-  }
-
   @override
   Widget build(BuildContext context) {
+    final c = context.fc;
     final session = SessionScope.of(context);
     final saved = session.saved;
+    final nothingYet = saved.favoriteRestaurants.isEmpty &&
+        saved.favoriteMeals.isEmpty &&
+        saved.history.isEmpty;
 
-    return DefaultTabController(
-      length: 2,
-      child: Scaffold(
-        appBar: AppBar(
-          title: const Text('Saved'),
-          actions: [
-            if (saved.history.isNotEmpty)
-              IconButton(
-                tooltip: 'Clear history',
-                onPressed: _confirmClear,
-                icon: const Icon(Icons.delete_outline),
-              ),
-          ],
-          bottom: const TabBar(
-            tabs: [Tab(text: 'Favorites'), Tab(text: 'History')],
-          ),
+    final Widget content;
+    if (_loading && nothingYet) {
+      content = const ListState(kind: ListStateKind.loading, rows: 4);
+    } else if (_failed && nothingYet) {
+      content = FcCard(
+        child: ListState(
+          kind: ListStateKind.error,
+          title: "Couldn't load your saved items",
+          body: 'Check your connection and try again.',
+          actionLabel: 'Try again',
+          onAction: _refresh,
         ),
-        body: Stack(
+      );
+    } else {
+      content = _tab == 0
+          ? _favorites(c, session)
+          : _history(c, session);
+    }
+
+    return Scaffold(
+      backgroundColor: c.bg,
+      body: SafeArea(
+        child: Column(
           children: [
-            TabBarView(
-              children: [
-                _favorites(context, session),
-                _history(context, session),
+            FcAppBar(
+              title: 'Saved',
+              backLabel: 'Back to Home',
+              actions: [
+                if (_tab == 1 && saved.history.isNotEmpty)
+                  FcButton(
+                    label: 'Clear history',
+                    variant: FcButtonVariant.ghost,
+                    iconOnly: true,
+                    icon: FcIcons.trash,
+                    onPressed: _confirmClear,
+                  ),
               ],
             ),
-            if (_busy) const LoadingBarrier(message: 'Loading information...'),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(
+                FcSpace.s4,
+                FcSpace.s1,
+                FcSpace.s4,
+                0,
+              ),
+              child: FcSeg(
+                options: const ['Favorites', 'History'],
+                selectedIndex: _tab,
+                semanticLabel: 'Saved',
+                onChanged: (index) => setState(() => _tab = index),
+              ),
+            ),
+            Expanded(
+              child: ListView(
+                padding: const EdgeInsets.fromLTRB(
+                  FcSpace.s4,
+                  FcSpace.s6,
+                  FcSpace.s4,
+                  FcSpace.s8,
+                ),
+                children: [content],
+              ),
+            ),
           ],
         ),
       ),
     );
   }
 
-  Widget _empty(BuildContext context, String message) {
-    return Card(
-      child: Padding(
-        padding: const EdgeInsets.all(18),
+  Widget _heading(FcColors c, String text, [int? count]) => Semantics(
+        header: true,
         child: Text(
-          message,
-          style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                color: Theme.of(context).colorScheme.onSurfaceVariant,
-              ),
+          count == null ? text : '$text · $count',
+          style: FcText.tabular(FcText.heading).copyWith(color: c.textPrimary),
         ),
+      );
+
+  Widget _emptyCard(FcColors c, IconData icon, String title, String body) {
+    return FcCard(
+      padding: const EdgeInsets.all(FcSpace.s4),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Container(
+            width: 40,
+            height: 40,
+            decoration: BoxDecoration(
+              shape: BoxShape.circle,
+              color: c.surfaceSunken,
+            ),
+            child: Center(child: FcIcon(icon, size: 20, color: c.textSecondary)),
+          ),
+          const SizedBox(width: FcSpace.s3),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  title,
+                  style: FcText.body.copyWith(
+                    fontWeight: FontWeight.w600,
+                    color: c.textPrimary,
+                  ),
+                ),
+                Text(
+                  body,
+                  style: FcText.bodySm.copyWith(color: c.textSecondary),
+                ),
+              ],
+            ),
+          ),
+        ],
       ),
     );
   }
 
-  Widget _favorites(BuildContext context, SessionController session) {
+  Widget _footnote(FcColors c, String text) => Padding(
+        padding: const EdgeInsets.only(top: FcSpace.s6),
+        child: Text(
+          text,
+          textAlign: TextAlign.center,
+          style: FcText.tabular(FcText.caption).copyWith(
+            color: c.textSecondary,
+          ),
+        ),
+      );
+
+  Widget _favorites(FcColors c, SessionController session) {
     final saved = session.saved;
-    return ListView(
-      padding: const EdgeInsets.fromLTRB(20, 8, 20, 32),
+    final restaurants = saved.favoriteRestaurants;
+    final meals = saved.favoriteMeals;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        Text('Restaurants', style: Theme.of(context).textTheme.titleMedium),
-        const SizedBox(height: 8),
-        if (saved.favoriteRestaurants.isEmpty)
-          _empty(context, 'Star a restaurant from the search results to save it here.')
+        _heading(c, 'Restaurants', restaurants.isEmpty ? null : restaurants.length),
+        const SizedBox(height: FcSpace.s3),
+        if (restaurants.isEmpty)
+          _emptyCard(
+            c,
+            FcIcons.star,
+            'No restaurants saved yet',
+            'Star a restaurant from the search results to save it here.',
+          )
         else
-          ...saved.favoriteRestaurants.map(
-            (restaurant) => Card(
-              margin: const EdgeInsets.only(bottom: 12),
-              child: Padding(
-                padding: const EdgeInsets.all(18),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Row(
-                      children: [
-                        Expanded(
-                          child: Text(
-                            restaurant.name,
-                            style: Theme.of(context).textTheme.titleLarge,
-                          ),
-                        ),
-                        IconButton(
-                          tooltip: 'Remove from favorites',
-                          onPressed: () => _run(
-                            () => session.toggleFavoriteRestaurant(restaurant),
-                          ),
-                          icon: const Icon(Icons.star),
-                        ),
-                      ],
-                    ),
-                    if (restaurant.address.isNotEmpty)
-                      Text(
-                        restaurant.address,
-                        style: Theme.of(context).textTheme.bodySmall,
-                      ),
-                    const SizedBox(height: 12),
-                    FilledButton(
-                      onPressed: _busy ? null : () => _check(restaurant),
-                      child: const Text('Check this restaurant'),
-                    ),
-                  ],
+          for (var i = 0; i < restaurants.length; i++) ...[
+            if (i > 0) const SizedBox(height: FcSpace.s3),
+            RestaurantCard(
+              restaurant: restaurants[i],
+              favorite: true,
+              showReason: false,
+              showAddress: true,
+              onFavorite: () => _run(
+                () => session.toggleFavoriteRestaurant(restaurants[i]),
+              ),
+              onCheck: () => _check(restaurants[i]),
+            ),
+          ],
+        const SizedBox(height: FcSpace.s6),
+        _heading(c, 'Meals', meals.isEmpty ? null : meals.length),
+        const SizedBox(height: FcSpace.s3),
+        if (meals.isEmpty)
+          _emptyCard(
+            c,
+            FcIcons.bookmark,
+            'No meals saved yet',
+            'Bookmark a menu item to keep its macros here.',
+          )
+        else
+          for (var i = 0; i < meals.length; i++) ...[
+            if (i > 0) const SizedBox(height: FcSpace.s3),
+            _MealCard(
+              meal: meals[i],
+              onRemove: () => _run(
+                () => session.toggleFavoriteMeal(
+                  RestaurantRecommendation(
+                    name: meals[i].restaurantName,
+                    address: meals[i].restaurantAddress,
+                  ),
+                  meals[i].item,
                 ),
               ),
             ),
-          ),
-        const SizedBox(height: 16),
-        Text('Meals', style: Theme.of(context).textTheme.titleMedium),
-        const SizedBox(height: 8),
-        if (saved.favoriteMeals.isEmpty)
-          _empty(context, 'Bookmark a menu item to keep its macros here.')
-        else
-          ...saved.favoriteMeals.map(
-            (meal) => Card(
-              margin: const EdgeInsets.only(bottom: 12),
-              child: Padding(
-                padding: const EdgeInsets.all(18),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Row(
-                      children: [
-                        Expanded(
-                          child: Text(
-                            meal.item.name,
-                            style: Theme.of(context).textTheme.titleMedium,
-                          ),
-                        ),
-                        IconButton(
-                          tooltip: 'Remove from favorites',
-                          onPressed: () => _run(
-                            () => session.toggleFavoriteMeal(
-                              RestaurantRecommendation(
-                                name: meal.restaurantName,
-                                address: meal.restaurantAddress,
-                              ),
-                              meal.item,
-                            ),
-                          ),
-                          icon: const Icon(Icons.bookmark),
-                        ),
-                      ],
-                    ),
-                    Text(
-                      meal.restaurantName,
-                      style: Theme.of(context).textTheme.bodySmall,
-                    ),
-                    const SizedBox(height: 12),
-                    Wrap(
-                      spacing: 10,
-                      runSpacing: 10,
-                      children: [
-                        _MacroChip('Calories', meal.item.calories.toString()),
-                        _MacroChip('Protein', '${meal.item.proteins} g'),
-                        _MacroChip('Carbs', '${meal.item.carbs} g'),
-                        _MacroChip('Fat', '${meal.item.fat} g'),
-                      ],
-                    ),
-                  ],
-                ),
-              ),
-            ),
-          ),
+          ],
+        if (restaurants.isNotEmpty || meals.isNotEmpty)
+          _footnote(c, 'Newest first · up to 100 favorites'),
       ],
     );
   }
 
-  Widget _history(BuildContext context, SessionController session) {
-    final saved = session.saved;
-    return ListView(
-      padding: const EdgeInsets.fromLTRB(20, 8, 20, 32),
+  Widget _history(FcColors c, SessionController session) {
+    final history = session.saved.history;
+    if (history.isEmpty) {
+      return const FcCard(
+        child: ListState(
+          kind: ListStateKind.empty,
+          icon: FcIcons.storefront,
+          title: 'No history yet',
+          body: 'Restaurants you check will show up here so you can reopen '
+              'them instantly.',
+        ),
+      );
+    }
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        if (saved.history.isEmpty)
-          _empty(context, 'Restaurants you check will show up here so you can reopen them instantly.')
-        else
-          ...saved.history.map(
-            (entry) => Card(
-              margin: const EdgeInsets.only(bottom: 12),
-              child: ListTile(
-                title: Text(entry.restaurant.name),
-                subtitle: Text(
-                  [
-                    '${entry.menuItems.length} items',
-                    _ago(entry.checkedAt),
-                  ].where((part) => part.isNotEmpty).join(' · '),
+        FcCard(
+          clip: true,
+          child: Column(
+            children: [
+              for (var i = 0; i < history.length; i++) ...[
+                if (i > 0) Divider(color: c.border, height: 1, thickness: 1),
+                _HistoryRow(
+                  entry: history[i],
+                  when: savedTimeLabel(history[i].checkedAt),
+                  onTap: () => _openHistory(history[i]),
                 ),
-                trailing: const Icon(Icons.chevron_right),
-                onTap: () => _openHistory(entry),
-              ),
-            ),
+              ],
+            ],
           ),
+        ),
+        _footnote(
+          c,
+          'Your 20 most recent checks. Opening one shows the saved results '
+          'right away.',
+        ),
       ],
     );
   }
 }
 
-class _MacroChip extends StatelessWidget {
-  const _MacroChip(this.label, this.value);
+class _HistoryRow extends StatelessWidget {
+  const _HistoryRow({
+    required this.entry,
+    required this.when,
+    required this.onTap,
+  });
 
-  final String label;
-  final String value;
+  final HistoryEntry entry;
+  final String when;
+  final VoidCallback onTap;
 
   @override
   Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
-      decoration: BoxDecoration(
-        color: const Color(0xFFEEF6F0),
-        borderRadius: BorderRadius.circular(10),
+    final c = context.fc;
+    final count = entry.menuItems.length;
+    final meta = [
+      '$count ${count == 1 ? 'item' : 'items'}',
+      if (when.isNotEmpty) when,
+    ].join(' · ');
+    return Semantics(
+      button: true,
+      label: '${entry.restaurant.name}, $meta',
+      excludeSemantics: true,
+      onTap: onTap,
+      child: InkWell(
+        onTap: onTap,
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(minHeight: 64),
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(16, 10, 12, 10),
+            child: Row(
+              children: [
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        entry.restaurant.name,
+                        style: FcText.body.copyWith(
+                          fontWeight: FontWeight.w600,
+                          color: c.textPrimary,
+                        ),
+                      ),
+                      Text(
+                        meta,
+                        style: FcText.tabular(FcText.bodySm).copyWith(
+                          color: c.textSecondary,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                FcIcon(FcIcons.caretRight, size: 20, color: c.textSecondary),
+              ],
+            ),
+          ),
+        ),
       ),
-      child: Column(
+    );
+  }
+}
+
+/// A saved dish: name, restaurant and price, macros, and its verdict.
+class _MealCard extends StatelessWidget {
+  const _MealCard({required this.meal, required this.onRemove});
+
+  final FavoriteMeal meal;
+  final VoidCallback onRemove;
+
+  @override
+  Widget build(BuildContext context) {
+    final c = context.fc;
+    final item = meal.item;
+    final status = matchStatusFrom(item.matchStatus);
+    final sub = [
+      meal.restaurantName,
+      if (item.price != null) item.price!,
+    ].join(' · ');
+    return FcCard(
+      child: Stack(
         children: [
-          Text(label, style: Theme.of(context).textTheme.labelSmall),
-          Text(value, style: Theme.of(context).textTheme.labelLarge),
+          Padding(
+            padding: const EdgeInsets.all(FcSpace.s4),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Padding(
+                  padding: const EdgeInsets.only(right: 40),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Semantics(
+                        header: true,
+                        child: Text(
+                          item.name,
+                          style: FcText.body.copyWith(
+                            fontWeight: FontWeight.w600,
+                            color: c.textPrimary,
+                          ),
+                        ),
+                      ),
+                      Text(
+                        sub,
+                        style: FcText.tabular(FcText.bodySm).copyWith(
+                          color: c.textSecondary,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(height: 10),
+                Wrap(
+                  spacing: FcSpace.s1,
+                  runSpacing: FcSpace.s1,
+                  children: [
+                    MacroChip(value: fcNum(item.calories), unit: 'cal'),
+                    MacroChip(value: '${fcNum(item.proteins)} g', unit: 'protein'),
+                    MacroChip(value: '${fcNum(item.carbs)} g', unit: 'carbs'),
+                    MacroChip(value: '${fcNum(item.fat)} g', unit: 'fat'),
+                  ],
+                ),
+                if (item.matchReason.isNotEmpty) ...[
+                  const SizedBox(height: 10),
+                  Wrap(
+                    crossAxisAlignment: WrapCrossAlignment.center,
+                    spacing: FcSpace.s2,
+                    runSpacing: FcSpace.s1,
+                    children: [
+                      MatchBadge(status: status),
+                      Text(
+                        item.matchReason,
+                        style: FcText.bodySm.copyWith(color: c.textPrimary),
+                      ),
+                    ],
+                  ),
+                ],
+              ],
+            ),
+          ),
+          Positioned(
+            top: FcSpace.s1,
+            right: FcSpace.s1,
+            child: BookmarkToggle(pressed: true, onPressed: onRemove),
+          ),
         ],
       ),
     );

@@ -1,146 +1,151 @@
-<!DOCTYPE html>
-<html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Menu Preferences</title>
-    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
-    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
-</head>
-<body>
-    {% include "_nav.html" %}
-    <main class="page">
-        <h1>Restaurant menu preferences</h1>
-        <p class="lede">Set macro targets, then search nearby restaurants or check one place. You can pick a restaurant from a previous search or type a name.</p>
+{% extends "base.html" %}
+{% from "_components.html" import icon, button, appbar %}
+{% block title %}Preferences · Forkcast{% endblock %}
 
-        <form id="preferences-form" method="post">
-            <section class="card">
-                <h2>Macros</h2>
-                <p class="hint">Optional targets. These map to FoodItem fields: calories, proteins, carbs, fat, fiber, and sugar.</p>
-                <div class="field-grid">
-                    {% for name, label, unit in macro_fields %}
-                    <label class="stack">{{ label }} ({{ unit }})
-                        <input type="number" name="{{ name }}" min="0" step="any"
-                            value="{{ preference_values[name] }}"
-                            placeholder="Any">
-                    </label>
+{% block body %}
+{# Allergens offered as one-tap chips: stored key, label, icon. #}
+{% set common_allergies = [
+    ("peanuts", "Peanuts", "acorn"), ("tree nuts", "Tree nuts", "acorn"),
+    ("shellfish", "Shellfish", "shrimp"), ("fish", "Fish", "fish"),
+    ("egg", "Egg", "egg"), ("dairy", "Dairy", "cheese"), ("gluten", "Gluten", "bread")] %}
+{% set common_keys = common_allergies | map(attribute=0) | list %}
+{% set rows = [
+    ("calories", "Calories", "cal"), ("proteins", "Protein", "g"), ("carbs", "Carbs", "g"),
+    ("fat", "Fat", "g"), ("fiber", "Fiber", "g"), ("sugar", "Sugar", "g")] %}
+{% set has_saved = preferences.calories is not none or preferences.proteins is not none
+    or preferences.carbs is not none or preferences.fat is not none
+    or preferences.fiber is not none or preferences.sugar is not none
+    or preferences.halal or preferences.kosher or preferences.allergies %}
+
+{% set account %}
+<span class="fw-sm fw-muted">{{ session.get("username") }}</span>
+<form method="post" action="{{ url_for('api_logout') }}">
+    {{ button("Log out", variant="ghost", type="submit", icon_name="user") }}
+</form>
+{% endset %}
+{{ appbar(show_logo=true, actions=account) }}
+
+<form id="preferences-form" class="fw-form" method="post" action="{{ url_for('search_restaurants') }}" data-loading="search">
+    <main class="fw-main">
+        <div class="fw-stack--tight fw-stack">
+            <h1 class="fw-title">{{ "Your preferences" if has_saved else "Set up your preferences" }}</h1>
+            {% if has_saved %}
+            <p class="fw-icon-line" style="align-items: center;">{{ icon("check", 16) }}<span>Saved. We use these for every search.</span></p>
+            {% else %}
+            <p class="fw-sm fw-muted">Add what you're aiming for. We rank places and dishes by how close they get.</p>
+            {% endif %}
+        </div>
+
+        <section class="fw-stack" aria-labelledby="h-macros">
+            <div class="fw-section-head">
+                <h2 class="fw-heading" id="h-macros">Macro targets</h2>
+                <div class="fc-seg" role="radiogroup" aria-label="Targets apply">
+                    <label class="fc-seg__opt"><input type="radio" name="targets_per" value="meal" {% if preferences.targets_per != "day" %}checked{% endif %}>Per meal</label>
+                    <label class="fc-seg__opt"><input type="radio" name="targets_per" value="day" {% if preferences.targets_per == "day" %}checked{% endif %}>Per day</label>
+                </div>
+            </div>
+            <div class="fc-card fw-card-list" style="overflow: hidden;">
+                {% for name, label, unit in rows %}
+                <div class="fw-macro-row">
+                    <label for="m-{{ name }}">{{ label }}</label>
+                    <div class="fa-input fa-input--num">
+                        <input id="m-{{ name }}" name="{{ name }}" type="number" inputmode="decimal" min="0" step="any"
+                            placeholder="Any" value="{{ preference_values[name] }}" data-macro="{{ name }}">
+                        <span class="fa-unit">{{ unit }}</span>
+                    </div>
+                </div>
+                {% endfor %}
+            </div>
+            <p class="fc-field__hint">{{ icon("info", 16) }}<span>Leave a field as Any to skip it. Macros for each dish are estimates.</span></p>
+        </section>
+
+        <section class="fw-stack" aria-labelledby="h-diet">
+            <h2 class="fw-heading" id="h-diet">Dietary</h2>
+            <div class="fc-card fw-card-list" style="overflow: hidden;">
+                <div class="fw-diet-row">
+                    <div><p id="d-halal">Halal</p><p class="fw-sm fw-muted">Only places that serve halal</p></div>
+                    <label class="fa-switch"><input type="checkbox" role="switch" name="halal" aria-labelledby="d-halal" {% if preferences.halal %}checked{% endif %}><span aria-hidden="true"></span></label>
+                </div>
+                <div class="fw-diet-row">
+                    <div><p id="d-kosher">Kosher</p><p class="fw-sm fw-muted">Only places that serve kosher</p></div>
+                    <label class="fa-switch"><input type="checkbox" role="switch" name="kosher" aria-labelledby="d-kosher" {% if preferences.kosher %}checked{% endif %}><span aria-hidden="true"></span></label>
+                </div>
+            </div>
+        </section>
+
+        <section class="fw-stack" aria-labelledby="h-allergy">
+            <div class="fw-stack--tight fw-stack">
+                <h2 class="fw-heading" id="h-allergy">Allergies</h2>
+                <p class="fw-sm fw-muted">We hide dishes that list these. Tap to add or remove.</p>
+            </div>
+            <div class="fa-input">
+                <label for="allergy-input" class="fc-sr">Add an allergy</label>
+                <input id="allergy-input" type="text" placeholder="Add another, like sesame" autocomplete="off" enterkeyhint="done">
+                {{ button("Add", variant="ghost", id="allergy-add") }}
+            </div>
+            <input type="hidden" name="allergies" id="allergies" value="{{ preferences.allergies | join(', ') }}">
+            <div class="fc-chiprow" id="allergy-chips" role="group" aria-label="Allergies">
+                {% for key, label, icon_name in common_allergies %}
+                <label class="fc-chip">
+                    <input type="checkbox" data-allergy="{{ key }}" {% if key in preferences.allergies %}checked{% endif %}>
+                    {{ icon(icon_name, 16) }}<span>{{ label }}</span>
+                </label>
+                {% endfor %}
+                {% for key in preferences.allergies if key not in common_keys %}
+                <label class="fc-chip">
+                    <input type="checkbox" data-allergy="{{ key }}" checked>
+                    <span>{{ key | capitalize }}</span>
+                </label>
+                {% endfor %}
+            </div>
+        </section>
+
+        <section class="fw-stack" aria-labelledby="h-restaurant">
+            <div class="fw-stack--tight fw-stack">
+                <h2 class="fw-heading" id="h-restaurant">Check a specific restaurant</h2>
+                <p class="fw-sm fw-muted">Type a restaurant name{% if restaurants %}, or pick one from your last search{% endif %}.</p>
+            </div>
+            {% if restaurants %}
+            <div class="fw-field">
+                <label for="restaurant-choice">From search results</label>
+                <select class="fw-select" name="restaurant_choice" id="restaurant-choice">
+                    <option value="">Choose a restaurant</option>
+                    {% for restaurant in restaurants %}
+                    <option value="{{ restaurant.name }}" {% if preferences.restaurant_name == restaurant.name %}selected{% endif %}>{{ restaurant.name }}</option>
                     {% endfor %}
+                </select>
+            </div>
+            {% endif %}
+            <div class="fw-field">
+                <label for="restaurant-name">Restaurant name</label>
+                <div class="fa-input">
+                    <input id="restaurant-name" type="text" name="restaurant_name" value="{{ preferences.restaurant_name }}" placeholder="e.g. Sweetgreen, Chipotle" autocomplete="off">
                 </div>
-            </section>
+            </div>
+        </section>
 
-            <section class="card">
-                <h2>Dietary restrictions</h2>
-                <div class="choice-grid">
-                    <label class="choice">
-                        <input type="checkbox" name="halal" {% if preferences.halal %}checked{% endif %}>
-                        Halal
-                    </label>
-                    <label class="choice">
-                        <input type="checkbox" name="kosher" {% if preferences.kosher %}checked{% endif %}>
-                        Kosher
-                    </label>
-                </div>
-            </section>
-
-            <section class="card">
-                <h2>Custom allergies</h2>
-                <p class="hint">Comma-separated. Values are trimmed and stored in lowercase.</p>
-                <label class="stack">Allergies
-                    <input type="text" name="allergies" value="{{ preferences.allergies | join(', ') }}" placeholder="e.g. peanuts, shellfish, garlic">
-                </label>
-            </section>
-
-            <section class="card">
-                <h2>Restaurant</h2>
-                <p class="hint">Select a place from Search Restaurants, or type a name for Check a Specific Restaurant.</p>
-                {% if restaurants %}
-                <label class="stack">From search results
-                    <select name="restaurant_choice">
-                        <option value="">Choose a restaurant</option>
-                        {% for restaurant in restaurants %}
-                        <option value="{{ restaurant.name }}" {% if preferences.restaurant_name == restaurant.name %}selected{% endif %}>{{ restaurant.name }}</option>
-                        {% endfor %}
-                    </select>
-                </label>
-                {% endif %}
-                <label class="stack" style="margin-top: 1rem;">Or type a restaurant
-                    <input type="text" name="restaurant_name" value="{{ preferences.restaurant_name }}" placeholder="e.g. Sweetgreen, Chipotle">
-                </label>
-            </section>
-
-            <input type="hidden" name="latitude" id="latitude">
-            <input type="hidden" name="longitude" id="longitude">
-
-            <section class="card">
-                <h2>Next step</h2>
-                <div class="actions">
-                    <button class="primary" type="submit" id="search-restaurants-btn"
-                        formaction="{{ url_for('search_restaurants') }}">Search Restaurants</button>
-                    <button class="secondary" type="submit"
-                        formaction="{{ url_for('check_restaurant') }}">Check a Specific Restaurant</button>
-                </div>
-            </section>
-        </form>
+        <input type="hidden" name="latitude" id="latitude">
+        <input type="hidden" name="longitude" id="longitude">
+        <div class="fw-alert" id="location-error" role="alert" hidden>
+            <i class="ph ph-warning" style="font-size: 20px" aria-hidden="true"></i>
+            <p><strong>We couldn't get your location.</strong> Allow location access in your browser, then try again.</p>
+        </div>
     </main>
 
-    <script>
-        let userLocation = null;
+    <div class="fw-footer">
+        <p class="fw-footer__summary" id="summary">Add a target or a dietary filter to search.</p>
+        <button class="fc-btn fc-btn--primary fc-btn--lg fc-btn--block" type="submit" id="search-restaurants-btn" formaction="{{ url_for('search_restaurants') }}" data-loading="search">
+            {{ icon("magnifying-glass") }}<span class="fc-btn__label">Search restaurants</span>
+        </button>
+        <button class="fc-btn fc-btn--secondary fc-btn--lg fc-btn--block" type="submit" id="check-restaurant-btn" formaction="{{ url_for('check_restaurant') }}" data-loading="check">
+            {{ icon("storefront") }}<span class="fc-btn__label">Check a specific restaurant</span>
+        </button>
+    </div>
+</form>
 
-        function requestLocation() {
-            return new Promise((resolve, reject) => {
-                if (!navigator.geolocation) {
-                    reject(new Error("Geolocation is not supported by this browser."));
-                    return;
-                }
+{% include "_loading.html" %}
+{% endblock %}
 
-                navigator.geolocation.getCurrentPosition(
-                    (position) => {
-                        userLocation = {
-                            latitude: position.coords.latitude,
-                            longitude: position.coords.longitude
-                        };
-                        resolve(userLocation);
-                    },
-                    (error) => reject(error),
-                    { enableHighAccuracy: true, timeout: 10000, maximumAge: 300000 }
-                );
-            });
-        }
-
-        requestLocation().catch(() => {});
-
-        function fillLocation() {
-            if (!userLocation) {
-                return;
-            }
-            document.getElementById("latitude").value = userLocation.latitude;
-            document.getElementById("longitude").value = userLocation.longitude;
-        }
-
-        document.getElementById("preferences-form").addEventListener("submit", async (event) => {
-            const isSearch = event.submitter && event.submitter.id === "search-restaurants-btn";
-            if (!isSearch) {
-                fillLocation();
-                return;
-            }
-
-            if (!userLocation) {
-                event.preventDefault();
-                try {
-                    await requestLocation();
-                    fillLocation();
-                    showGeminiLoader();
-                    event.target.setAttribute("action", event.submitter.getAttribute("formaction"));
-                    event.target.submit();
-                } catch {
-                    alert("Unable to get your location. Please allow location access and try again.");
-                }
-                return;
-            }
-
-            fillLocation();
-        });
-    </script>
-    {% include "_gemini_loader.html" %}
-</body>
-</html>
+{% block scripts %}
+<script src="{{ url_for('static', filename='home.js') }}" defer></script>
+{% endblock %}

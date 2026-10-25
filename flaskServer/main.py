@@ -251,6 +251,18 @@ app.config.update(
 )
 
 
+@app.template_filter("fcnum")
+def fcnum_filter(value: Any) -> str:
+    """Whole numbers without a trailing .0, anything else with one decimal."""
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return ""
+    if abs(number - round(number)) < 0.05:
+        return str(int(round(number)))
+    return f"{number:.1f}"
+
+
 def wants_json() -> bool:
     if request.is_json:
         return True
@@ -415,7 +427,11 @@ def api_signup():
             return response
         return (
             render_template(
-                "signup.html", error=message, suggestions=suggestions, username=username
+                "signup.html",
+                error=message,
+                username_taken=True,
+                suggestions=suggestions,
+                username=username,
             ),
             409,
         )
@@ -453,7 +469,16 @@ def api_login():
         message = "Invalid username or password."
         if wants_json():
             return json_error(message, 401)
-        return render_template("login.html", error=message, next_url=next_url), 401
+        return (
+            render_template(
+                "login.html",
+                error=message,
+                next_url=next_url,
+                bad_credentials=True,
+                username=username,
+            ),
+            401,
+        )
 
     session.clear()
     session["username"] = user["username"]
@@ -730,7 +755,9 @@ def search_restaurants_with_gemini(preferences: UserPreferences) -> List[Restaur
     prompt = (
         "Recommend 5 local restaurants that are likely to have food matching these "
         "nutrition and diet goals. Prefer real nearby places. Judge fit from cuisine, "
-        "restaurant type, and general reputation only. Do not look up, guess, or "
+        "restaurant type, and general reputation only. Order the list from best fit "
+        "to least fit. Include price_level (1 to 4) and the restaurant's latitude and "
+        "longitude when search or maps shows them. Do not look up, guess, or "
         "return menus, dish names, ingredients, or macros.\n\n"
         f"{preferences.prompt_summary()}"
     )

@@ -1,0 +1,29 @@
+/* Phosphor icons (MIT), self-hosted. Only the icons the design uses. */
+@font-face { font-family: "Phosphor"; src: url("fonts/Phosphor-Regular.woff2") format("woff2"); font-weight: normal; font-style: normal; font-display: block; }
+.ph { font-family: "Phosphor" !important; speak: never; font-style: normal; font-weight: normal; font-variant: normal; text-transform: none; line-height: 1; display: inline-block; flex: none; -webkit-font-smoothing: antialiased; -moz-osx-font-smoothing: grayscale; }
+.ph-caret-left::before { content: "\e138"; }
+.ph-caret-right::before { content: "\e13a"; }
+.ph-magnifying-glass::before { content: "\e30c"; }
+.ph-storefront::before { content: "\e470"; }
+.ph-bowl-food::before { content: "\eaa4"; }
+.ph-fork-knife::before { content: "\e262"; }
+.ph-person-simple-walk::before { content: "\e73a"; }
+.ph-acorn::before { content: "\eb9a"; }
+.ph-shrimp::before { content: "\eab4"; }
+.ph-fish::before { content: "\e728"; }
+.ph-egg::before { content: "\e812"; }
+.ph-cheese::before { content: "\e9fe"; }
+.ph-bread::before { content: "\e81c"; }
+.ph-warning::before { content: "\e4e0"; }
+.ph-info::before { content: "\e2ce"; }
+.ph-check::before { content: "\e182"; }
+.ph-x-circle::before { content: "\e4f8"; }
+.ph-map-pin::before { content: "\e316"; }
+.ph-user::before { content: "\e4c2"; }
+.ph-x::before { content: "\e4f6"; }
+.ph-check-circle::before { content: "\e184"; }
+.ph-swap::before { content: "\e83c"; }
+.ph-seal-check::before { content: "\e606"; }
+.ph-file-text::before { content: "\e23a"; }
+.ph-cloud-slash::before { content: "\e1b6"; }
+.ph-arrow-left::before { content: "\e058"; }

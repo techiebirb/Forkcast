@@ -1,0 +1,193 @@
+{# Forkcast components for the web pages. They mirror the app's widgets and use
+   the design system's fc-* / fa-* classes from static/forkcast.css. #}
+
+{% macro icon(name, size=20) -%}
+<i class="ph ph-{{ name }} fc-icon" style="font-size: {{ size }}px" aria-hidden="true"></i>
+{%- endmacro %}
+
+{# The pin mark. It takes its colors from the theme. #}
+{% macro logo_mark(size=28) -%}
+<svg width="{{ size }}" height="{{ size }}" viewBox="14 10 72 80" aria-hidden="true" focusable="false">
+  <path d="M50 14C34.5 14 22 26.3 22 41.6 22 61.6 50 84 50 84S78 61.6 78 41.6C78 26.3 65.5 14 50 14Z" style="fill: var(--accent);"/>
+  <rect x="41.5" y="27" width="3.2" height="11" rx="1.6" style="fill: var(--bg);"/>
+  <rect x="48.4" y="27" width="3.2" height="11" rx="1.6" style="fill: var(--bg);"/>
+  <rect x="55.3" y="27" width="3.2" height="11" rx="1.6" style="fill: var(--bg);"/>
+  <path d="M41.5 36h17v2.8c0 4.7-3.8 8.5-8.5 8.5s-8.5-3.8-8.5-8.5Z" style="fill: var(--bg);"/>
+  <rect x="47.9" y="45" width="4.2" height="20" rx="2.1" style="fill: var(--bg);"/>
+</svg>
+{%- endmacro %}
+
+{# A link or button styled as a Forkcast button. Pass href for a link. For an
+   icon-only button, label is the accessible name. #}
+{% macro button(label, variant="primary", href=none, type="button", icon_name=none, large=false, block=false, icon_only=false, formaction=none, id=none, disabled=false) -%}
+{%- set classes = "fc-btn fc-btn--" ~ variant ~ (" fc-btn--lg" if large else "") ~ (" fc-btn--block" if block else "") ~ (" fc-btn--icon" if icon_only else "") -%}
+{%- if href %}
+<a class="{{ classes }}" href="{{ href }}"{% if icon_only %} aria-label="{{ label }}"{% endif %}{% if id %} id="{{ id }}"{% endif %}>
+  {%- if icon_name %}{{ icon(icon_name) }}{% endif -%}
+  {%- if icon_only %}<span class="fc-sr">{{ label }}</span>{% else %}<span class="fc-btn__label">{{ label }}</span>{% endif -%}
+</a>
+{%- else %}
+<button class="{{ classes }}" type="{{ type }}"{% if formaction %} formaction="{{ formaction }}"{% endif %}{% if id %} id="{{ id }}"{% endif %}{% if disabled %} disabled{% endif %}{% if icon_only %} aria-label="{{ label }}"{% endif %}>
+  {%- if icon_name %}{{ icon(icon_name) }}{% endif -%}
+  {%- if icon_only %}<span class="fc-sr">{{ label }}</span>{% else %}<span class="fc-btn__label">{{ label }}</span>{% endif -%}
+</button>
+{%- endif %}
+{%- endmacro %}
+
+{# In-page top bar. Pass back_href for a back button, and optionally a title with a
+   location line. #}
+{% macro appbar(title=none, subtitle=none, back_href=none, back_label="Back", show_logo=false, actions=none) -%}
+<header class="fc-appbar" style="padding-top: 12px;">
+  {% if back_href %}{{ button(back_label, variant="ghost", href=back_href, icon_name="caret-left", icon_only=true) }}{% endif %}
+  <div class="fc-appbar__titles">
+    {% if show_logo %}
+    <a class="fw-wordmark" href="{{ url_for('home') }}">{{ logo_mark(28) }}<span>Forkcast</span></a>
+    {% elif title %}
+    <h1 class="fc-appbar__title">{{ title }}</h1>
+    {% endif %}
+    {% if subtitle %}<p class="fc-appbar__sub">{{ icon("map-pin", 16) }}<span>{{ subtitle }}</span></p>{% endif %}
+  </div>
+  {% if actions %}<div class="fc-appbar__actions">{{ actions }}</div>{% endif %}
+</header>
+{%- endmacro %}
+
+{% macro diet_tag(label, kind="preference", icon_name=none) -%}
+{%- if kind == "allergy" -%}
+<span class="fc-tag fc-tag--sm fc-tag--allergy">{{ icon(icon_name or "warning", 16) }}<span class="fc-sr">Allergy: </span>{{ label }}</span>
+{%- elif kind == "conflict" -%}
+<span class="fc-tag fc-tag--sm fw-tag-conflict">{{ icon(icon_name or "x-circle", 16) }}{{ label }}</span>
+{%- else -%}
+<span class="fc-tag fc-tag--sm fc-tag--preference">{{ icon(icon_name or "check", 16) }}{{ label }}</span>
+{%- endif -%}
+{%- endmacro %}
+
+{% macro match_badge(status) -%}
+{%- set info = {"fits": ["check-circle", "Fits you"], "swap": ["swap", "Fits with a swap"], "no": ["x-circle", "Doesn't fit"]}[status] or ["check-circle", "Fits you"] -%}
+<span class="fc-match fc-match--sm fc-match--{{ status if status in ['fits', 'swap', 'no'] else 'fits' }}">{{ icon(info[0], 16) }}<span>{{ info[1] }}</span></span>
+{%- endmacro %}
+
+{% macro confidence(verified) -%}
+{%- if verified -%}
+<span class="fc-conf fc-conf--verified">{{ icon("seal-check", 16) }}<span>Verified by restaurant</span></span>
+{%- else -%}
+<span class="fc-conf fc-conf--desc">{{ icon("file-text", 16) }}<span>Based on menu description</span></span>
+{%- endif -%}
+{%- endmacro %}
+
+{# A macro value such as "45 g protein". kind: "" (estimate), "target" or "missing". #}
+{% macro macro_chip(value, unit, kind="") -%}
+{%- if kind == "missing" -%}
+<span class="fa-macro fa-macro--missing">{{ unit }}</span>
+{%- else -%}
+<span class="fa-macro{% if kind == 'target' %} fa-macro--target{% endif %}"><b>{{ value }}</b>{{ unit }}</span>
+{%- endif -%}
+{%- endmacro %}
+
+{# Recap of the user's targets, diets and allergies. style: "tags" or "targets". #}
+{% macro pref_summary(preferences, title, edit_href, style="tags") -%}
+{%- set macros = [
+  (preferences.calories, "cal"), (preferences.proteins, "protein"), (preferences.carbs, "carbs"),
+  (preferences.fat, "fat"), (preferences.fiber, "fiber"), (preferences.sugar, "sugar")] -%}
+{%- set any_set = namespace(value=preferences.halal or preferences.kosher or preferences.allergies) -%}
+{%- for value, name in macros if value is not none %}{% set any_set.value = true %}{% endfor -%}
+<section class="fc-card" aria-label="{{ title }}" style="padding: 8px 8px 12px 16px; display: flex; flex-direction: column; gap: 4px;">
+  <div class="fw-row" style="justify-content: space-between;">
+    <p class="fc-caption" style="text-transform: none; letter-spacing: 0; font-size: 0.8125rem; line-height: 1.125rem; font-weight: 500;">{{ title }}</p>
+    <a class="fc-link" href="{{ edit_href }}" style="display: inline-flex; align-items: center; text-decoration: none;">Edit</a>
+  </div>
+  <div class="fc-chiprow fc-chiprow--tight" style="padding-right: 8px;">
+    {%- for value, name in macros if value is not none %}
+      {%- set text = (value | fcnum) if name == "cal" else ((value | fcnum) ~ " g") %}
+      {%- if style == "targets" %}{{ macro_chip(text, name, "target") }}
+      {%- else %}<span class="fc-tag fc-tag--sm fc-num">{{ text }} {{ name }}</span>{% endif %}
+    {%- endfor %}
+    {%- if preferences.halal %}{{ diet_tag("Halal") }}{% endif %}
+    {%- if preferences.kosher %}{{ diet_tag("Kosher") }}{% endif %}
+    {%- for allergy in preferences.allergies %}{{ diet_tag("No " ~ allergy, "allergy") }}{% endfor %}
+    {%- if not any_set.value %}
+    <span class="fw-sm fw-muted">No targets set. Any restaurant can match.</span>
+    {%- endif %}
+  </div>
+</section>
+{%- endmacro %}
+
+{# cuisine · $$ · walk time · distance. Parts without data are left out. #}
+{% macro restaurant_meta(r) -%}
+{%- set bits = [] -%}
+<p class="fc-meta fc-num">
+  {%- if r.cuisine %}<span>{{ r.cuisine }}</span>{% set _ = bits.append(1) %}{% endif -%}
+  {%- if r.price_level %}{% if bits %}<span class="fc-dot" aria-hidden="true">·</span>{% endif %}<span class="fc-price" aria-label="Price {{ r.price_level }} of 4">{{ "$" * r.price_level }}<span class="fc-price__off">{{ "$" * (4 - r.price_level) }}</span></span>{% set _ = bits.append(1) %}{% endif -%}
+  {%- if r.walk_minutes %}{% if bits %}<span class="fc-dot" aria-hidden="true">·</span>{% endif %}<span class="fc-meta__walk">{{ icon("person-simple-walk", 16) }}{{ r.walk_minutes }} min</span>{% set _ = bits.append(1) %}{% endif -%}
+  {%- if r.distance_miles %}{% if bits %}<span class="fc-dot" aria-hidden="true">·</span>{% endif %}<span>{{ r.distance_miles | fcnum }} mi</span>{% endif -%}
+</p>
+{%- endmacro %}
+
+{# A restaurant suggestion with a "Check this restaurant" form. #}
+{% macro restaurant_card(r, index=0) -%}
+<article class="fc-card fc-rcard">
+  <div class="fc-rcard__thumb" aria-hidden="true">{{ icon("bowl-food" if index is even else "fork-knife", 24) }}</div>
+  <div class="fc-rcard__main">
+    <h2 class="fc-rcard__name" style="padding-right: 0;">{{ r.name }}</h2>
+    {{ restaurant_meta(r) }}
+    {% if r.why_it_matches %}<p class="fw-sm">{{ r.why_it_matches }}</p>{% endif %}
+    {% if r.address %}<p class="fw-icon-line">{{ icon("map-pin", 16) }}<span>{{ r.address }}</span></p>{% endif %}
+    <form method="post" action="{{ url_for('check_restaurant') }}" data-loading="check" style="margin-top: 4px;">
+      <input type="hidden" name="restaurant_name" value="{{ r.name }}">
+      <button class="fc-btn fc-btn--secondary" type="submit" aria-label="Check {{ r.name }}"><span class="fc-btn__label">Check this restaurant</span></button>
+    </form>
+  </div>
+</article>
+{%- endmacro %}
+
+{# One dish: name and price, description, macros, conflicts, verdict, source. #}
+{% macro food_card(item) -%}
+<article class="fc-card fw-card-pad">
+  <div class="fw-dish__top">
+    <h3 class="fw-dish__name">{{ item.name }}</h3>
+    {% if item.price %}<span class="fw-dish__price">{{ item.price }}</span>{% endif %}
+  </div>
+  {%- set blurb = item.description or (item.ingredients | join(", ")) %}
+  {% if blurb %}<p class="fw-sm fw-muted">{{ blurb }}</p>{% endif %}
+  <div class="fc-chiprow fc-chiprow--tight" aria-label="Estimated macros">
+    {{ macro_chip(item.calories | fcnum, "cal") }}
+    {{ macro_chip((item.proteins | fcnum) ~ " g", "protein") }}
+    {{ macro_chip((item.carbs | fcnum) ~ " g", "carbs") }}
+    {{ macro_chip((item.fat | fcnum) ~ " g", "fat") }}
+    {% if item.fiber and item.fiber > 0 %}{{ macro_chip((item.fiber | fcnum) ~ " g", "fiber") }}{% endif %}
+    {% if item.sugar and item.sugar > 0 %}{{ macro_chip((item.sugar | fcnum) ~ " g", "sugar") }}{% endif %}
+  </div>
+  {% if item.allergens or item.diet_flags %}
+  <div class="fc-chiprow fc-chiprow--tight">
+    {% for allergen in item.allergens %}{{ diet_tag("Contains " ~ allergen, "allergy") }}{% endfor %}
+    {% for flag in item.diet_flags %}{{ diet_tag(flag, "conflict") }}{% endfor %}
+  </div>
+  {% endif %}
+  <div class="fw-verdict">
+    {{ match_badge(item.match_status or "fits") }}
+    {% if item.match_reason %}<span{% if item.match_status == "no" %} class="fw-muted"{% endif %}>{{ item.match_reason }}</span>{% endif %}
+  </div>
+  {{ confidence(item.source == "restaurant") }}
+</article>
+{%- endmacro %}
+
+{# Empty and error panels. kind: "empty" or "error". #}
+{% macro list_state(kind, title, body="", action_label=none, action_href=none) -%}
+<div class="fc-card">
+  <div class="fc-state{% if kind == 'error' %} fc-state--error{% endif %}"{% if kind == "error" %} role="alert"{% endif %}>
+    <span class="fc-state__icon" aria-hidden="true">{{ icon("cloud-slash" if kind == "error" else "magnifying-glass", 24) }}</span>
+    <h2 class="fc-state__title">{{ title }}</h2>
+    {% if body %}<p class="fc-state__body">{{ body }}</p>{% endif %}
+    {% if caller is defined %}{{ caller() }}
+    {% elif action_label and action_href %}{{ button(action_label, variant="secondary", href=action_href) }}{% endif %}
+  </div>
+</div>
+{%- endmacro %}
+
+{# Loading skeleton rows. #}
+{% macro skeleton(rows=3) -%}
+<div class="fc-skel" aria-hidden="true">
+  {% for _ in range(rows) %}
+  <div class="fc-skel__row"><span class="fc-skel__box"></span><span class="fc-skel__lines"><span style="width: 62%;"></span><span style="width: 84%;"></span><span style="width: 40%;"></span></span></div>
+  {% endfor %}
+</div>
+{%- endmacro %}
