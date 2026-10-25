@@ -2,7 +2,9 @@ import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 
 import 'api_client.dart';
-import 'app_theme.dart';
+import 'theme/app_theme.dart';
+import 'theme/tokens.dart';
+import 'widgets/widgets.dart';
 import 'screens/check_screen.dart';
 import 'screens/home_screen.dart';
 import 'screens/login_screen.dart';
@@ -125,7 +127,9 @@ class _MenuAppState extends State<MenuApp> with WidgetsBindingObserver {
       controller: widget.session,
       child: MaterialApp.router(
         title: 'Forkcast',
-        theme: buildAppTheme(),
+        theme: buildAppTheme(Brightness.light),
+        darkTheme: buildAppTheme(Brightness.dark),
+        themeMode: ThemeMode.system,
         routerConfig: _router,
         builder: (context, child) => Stack(
           children: [
@@ -138,9 +142,9 @@ class _MenuAppState extends State<MenuApp> with WidgetsBindingObserver {
   }
 }
 
-/// Slim banner shown mid-session while the server is waking up. The startup
-/// screen covers the app-launch case, so it is hidden until the session is
-/// ready.
+/// Accent strip docked at the top while the server wakes up mid-session.
+/// The startup screen covers the app-launch case, so it is hidden until the
+/// session is ready. It never takes taps, so the screen below keeps working.
 class _WakingBanner extends StatelessWidget {
   const _WakingBanner({required this.session});
 
@@ -148,6 +152,7 @@ class _WakingBanner extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final c = context.fc;
     return ListenableBuilder(
       listenable: session,
       builder: (context, _) => ValueListenableBuilder<bool>(
@@ -157,39 +162,44 @@ class _WakingBanner extends StatelessWidget {
           return Align(
             alignment: Alignment.topCenter,
             child: IgnorePointer(
-              ignoring: !show,
               child: AnimatedSlide(
-                duration: const Duration(milliseconds: 250),
+                duration: FcMotion.of(context, FcMotion.sheet),
+                curve: FcMotion.ease,
                 offset: show ? Offset.zero : const Offset(0, -1.5),
-                child: const Material(
-                  color: kAccent,
-                  elevation: 4,
-                  child: SafeArea(
-                    bottom: false,
-                    child: Padding(
-                      padding: EdgeInsets.symmetric(
-                        horizontal: 16,
-                        vertical: 10,
-                      ),
-                      child: Row(
-                        children: [
-                          SizedBox(
-                            width: 16,
-                            height: 16,
-                            child: CircularProgressIndicator(
-                              strokeWidth: 2,
-                              color: Colors.white,
-                            ),
+                child: Semantics(
+                  liveRegion: show,
+                  child: ColoredBox(
+                    color: c.accent,
+                    child: SafeArea(
+                      bottom: false,
+                      child: ConstrainedBox(
+                        constraints: const BoxConstraints(
+                          minHeight: 36,
+                          minWidth: double.infinity,
+                        ),
+                        child: Padding(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: FcSpace.s4,
+                            vertical: FcSpace.s2,
                           ),
-                          SizedBox(width: 12),
-                          Expanded(
-                            child: Text(
-                              'Waking up the server — this can take up to a '
-                              'minute.',
-                              style: TextStyle(color: Colors.white),
-                            ),
+                          child: Row(
+                            mainAxisAlignment: MainAxisAlignment.center,
+                            children: [
+                              FcSpinner(size: 14, color: c.onAccent),
+                              const SizedBox(width: FcSpace.s2),
+                              Flexible(
+                                child: Text(
+                                  'Waking up the server. This can take a '
+                                  'minute.',
+                                  textAlign: TextAlign.center,
+                                  style: context.text.labelMedium!.copyWith(
+                                    color: c.onAccent,
+                                  ),
+                                ),
+                              ),
+                            ],
                           ),
-                        ],
+                        ),
                       ),
                     ),
                   ),
@@ -210,18 +220,26 @@ class LoadingBarrier extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final c = context.fc;
     return Container(
-      color: Colors.black38,
+      color: c.scrim,
       alignment: Alignment.center,
-      child: Card(
-        child: Padding(
-          padding: const EdgeInsets.all(24),
+      child: Container(
+        margin: const EdgeInsets.all(FcSpace.s8),
+        padding: const EdgeInsets.all(FcSpace.s6),
+        decoration: BoxDecoration(
+          color: c.surfaceRaised,
+          borderRadius: BorderRadius.circular(FcRadius.card),
+          border: Border.all(color: c.border),
+        ),
+        child: Semantics(
+          liveRegion: true,
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
-              const CircularProgressIndicator(),
-              const SizedBox(height: 16),
-              Text(message),
+              FcSpinner(size: 24, color: c.accent),
+              const SizedBox(height: FcSpace.s4),
+              Text(message, textAlign: TextAlign.center),
             ],
           ),
         ),

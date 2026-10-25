@@ -3,7 +3,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 
 import '../app.dart';
-import '../app_theme.dart';
+import '../theme/tokens.dart';
 
 /// Shown while the app connects to the server. On Render's free tier a sleeping
 /// server takes about a minute to wake up, so we explain the wait.
@@ -90,12 +90,12 @@ class _WakingView extends StatelessWidget {
     return Column(
       mainAxisSize: MainAxisSize.min,
       children: [
-        const Icon(Icons.restaurant_menu, size: 56, color: kAccent),
+        Icon(Icons.restaurant_menu, size: 56, color: context.fc.accent),
         const SizedBox(height: 8),
         Text(
           'Forkcast',
           style: theme.textTheme.headlineMedium?.copyWith(
-            color: kInk,
+            color: context.fc.textPrimary,
             fontWeight: FontWeight.bold,
           ),
         ),
@@ -131,7 +131,7 @@ class _ErrorView extends StatelessWidget {
     return Column(
       mainAxisSize: MainAxisSize.min,
       children: [
-        const Icon(Icons.cloud_off, size: 56, color: kAccent),
+        Icon(Icons.cloud_off, size: 56, color: context.fc.accent),
         const SizedBox(height: 16),
         Text(message, textAlign: TextAlign.center),
         const SizedBox(height: 24),
