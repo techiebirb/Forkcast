@@ -163,6 +163,22 @@ class RestaurantRecommendation(BaseModel):
     )
 
 
+class RankedPick(BaseModel):
+    """Gemini's verdict on one Places candidate."""
+
+    place_id: str = Field(description="place_id copied exactly from the candidate list.")
+    fit_score: int = Field(
+        ge=0, le=100, description="How well the restaurant suits the user's goals, 0-100."
+    )
+    why_it_matches: str = Field(
+        description="One short sentence on why this place suits the diet and allergy needs. No dish names or macros."
+    )
+    possible_ideas: str = Field(
+        default="",
+        description="High-level meal types that might work here. No dish names or macros.",
+    )
+
+
 class SearchFilters(BaseModel):
     """Result filters chosen on the places screen."""
 
@@ -902,6 +918,8 @@ def generate_structured(
             return [FoodItem.model_validate(item) for item in data]
         if schema is list[RestaurantRecommendation]:
             return [RestaurantRecommendation.model_validate(item) for item in data]
+        if schema is list[RankedPick]:
+            return [RankedPick.model_validate(item) for item in data]
         return data
 
     # Gemini fails transiently (503 overload, 429 quota, truncated JSON). Try each
@@ -962,12 +980,16 @@ def search_restaurants_with_gemini(
 ) -> List[RestaurantRecommendation]:
     filter_text = filters.prompt_summary() if filters and filters.is_active() else ""
     prompt = (
-        "Recommend 10 local restaurants that are likely to have food matching these "
-        "nutrition and diet goals. Prefer real nearby places. Judge fit from cuisine, "
-        "restaurant type, and general reputation only. Order the list from best fit "
-        "to least fit. Include price_level (1 to 4) and the restaurant's latitude and "
-        "longitude when search or maps shows them. Do not look up, guess, or "
-        "return menus, dish names, ingredients, or macros.\n\n"
+        "Recommend 10 restaurants within about "
+        f"{DEFAULT_RADIUS_MILES:g} miles of the user's location (walkable or a short "
+        "ride, in the user's own neighborhood and borough, not a famous district "
+        "across town). Allergies and halal/kosher are the main test of fit; the macro "
+        "targets are per dish and almost any restaurant has something that fits, so "
+        "do not favor health-food places just because a calorie target is set. "
+        "Judge fit from cuisine, restaurant type, and general reputation only. Order "
+        "the list from best fit to least fit. Include price_level (1 to 4) and the "
+        "restaurant's latitude and longitude when maps shows them. Do not look up, "
+        "guess, or return menus, dish names, ingredients, or macros.\n\n"
         f"{preferences.prompt_summary()}"
         + (f"\n\nSearch filters:\n{filter_text}" if filter_text else "")
     )
@@ -983,7 +1005,7 @@ def search_restaurants_with_gemini(
         list[RestaurantRecommendation],
         system_instruction=system,
         use_maps=True,
-        use_search=True,
+        use_search=False,
         latitude=preferences.latitude,
         longitude=preferences.longitude,
     )
@@ -995,6 +1017,162 @@ def search_restaurants_with_gemini(
             for item in result
         ]
     return [RestaurantRecommendation.model_validate(result)]
+
+
+DEFAULT_RADIUS_MILES = 2.0
+WIDE_RADIUS_MILES = 4.0
+MIN_CANDIDATES = 8
+METERS_PER_MILE = 1609.34
+DISTANCE_PENALTY_PER_MILE = 10
+
+
+def _candidate_text_queries(preferences: UserPreferences) -> List[str]:
+    queries: List[str] = []
+    allergies = " ".join(preferences.allergies).lower()
+    if "gluten" in allergies:
+        queries.append("gluten free restaurant")
+    if preferences.halal:
+        queries.append("halal restaurant")
+    elif preferences.kosher:
+        queries.append("kosher restaurant")
+    if not queries and preferences.calories is not None:
+        queries.append("healthy bowls salads")
+    return queries[:2]
+
+
+def gather_candidates(
+    preferences: UserPreferences, filters: Optional[SearchFilters] = None
+) -> List[dict]:
+    """Real restaurants near the user from Google Places, each with its distance."""
+    lat = parse_optional_float(preferences.latitude)
+    lng = parse_optional_float(preferences.longitude)
+    if lat is None or lng is None:
+        return []
+    max_miles = filters.max_miles if filters and filters.max_miles else None
+    radius_miles = max_miles or DEFAULT_RADIUS_MILES
+    queries = _candidate_text_queries(preferences)
+
+    def _pool(miles: float) -> List[dict]:
+        meters = int(miles * METERS_PER_MILE)
+
+        def _nearby() -> List[dict]:
+            return search_google_places(
+                latitude=lat, longitude=lng, radius_meters=meters,
+                rank_preference="POPULARITY",
+            )
+
+        jobs = [_nearby] + [
+            (lambda q=q: search_google_places(
+                latitude=lat, longitude=lng, query=q, radius_meters=meters))
+            for q in queries
+        ]
+        merged: dict[str, dict] = {}
+        with ThreadPoolExecutor(max_workers=len(jobs)) as pool:
+            futures = [pool.submit(job) for job in jobs]
+            for index, future in enumerate(futures):
+                try:
+                    places = future.result()
+                except Exception:
+                    if index == 0:
+                        raise
+                    logger.warning("Text place search failed", exc_info=True)
+                    continue
+                for place in places:
+                    merged.setdefault(place["place_id"], place)
+        kept = []
+        for place in merged.values():
+            place.update(distance_fields(lat, lng, place["latitude"], place["longitude"]))
+            if place.get("distance_miles") is not None and place["distance_miles"] <= miles:
+                kept.append(place)
+        return kept
+
+    candidates = _pool(radius_miles)
+    if len(candidates) < MIN_CANDIDATES and max_miles is None:
+        candidates = _pool(WIDE_RADIUS_MILES)
+    if filters and filters.is_active():
+        candidates = apply_filters(candidates, filters)
+    return candidates
+
+
+def rank_candidates_with_gemini(
+    preferences: UserPreferences, candidates: List[dict]
+) -> List[RankedPick]:
+    lines = []
+    for place in candidates:
+        price = "$" * place["price_level"] if place.get("price_level") else "?"
+        lines.append(
+            f"- id={place['place_id']} | {place['name']} | "
+            f"{place.get('cuisine') or 'restaurant'} | {place.get('distance_miles')} mi | "
+            f"price {price} | rating {place.get('rating') or '?'} | "
+            f"{place.get('summary') or ''}"
+        )
+    prompt = (
+        "Pick up to 10 restaurants from the candidate list that best suit this user. "
+        "Use only place_ids from the list. Allergies and halal/kosher are the main "
+        "test: rank low any place whose food is mostly the thing the user avoids "
+        "(a bakery or pasta place for someone avoiding gluten), but not places that "
+        "merely serve some of it. Macro targets are per dish and count lightly, "
+        "since most restaurants have something that fits. When fit is similar, "
+        "prefer the closer place. Judge from cuisine, type, and reputation only; do "
+        "not invent menus, dish names, or macros.\n\n"
+        f"{preferences.prompt_summary()}\n\nCandidates:\n" + "\n".join(lines)
+    )
+    system = (
+        "You rank nearby restaurants for a nutrition-aware diner. Return only "
+        "structured picks."
+    )
+    result = generate_structured(
+        prompt,
+        list[RankedPick],
+        system_instruction=system,
+        use_maps=False,
+        use_search=False,
+    )
+    if not result:
+        return []
+    items = result if isinstance(result, list) else [result]
+    return [
+        item if isinstance(item, RankedPick) else RankedPick.model_validate(item)
+        for item in items
+    ]
+
+
+def search_nearby_ranked(
+    preferences: UserPreferences, filters: Optional[SearchFilters] = None
+) -> List[dict]:
+    """Places finds the restaurants; Gemini only ranks them. Raises if Places fails."""
+    candidates = gather_candidates(preferences, filters)
+    if not candidates:
+        return []
+    by_id = {place["place_id"]: place for place in candidates}
+    picks = rank_candidates_with_gemini(preferences, candidates)
+    scored = []
+    seen = set()
+    for pick in picks:
+        place = by_id.get(pick.place_id)
+        if place is None or pick.place_id in seen:
+            continue
+        seen.add(pick.place_id)
+        data = {
+            "name": place["name"],
+            "address": place["address"],
+            "cuisine": place.get("cuisine", ""),
+            "why_it_matches": pick.why_it_matches,
+            "possible_ideas": pick.possible_ideas,
+            "website": place["website"],
+            "place_id": place["place_id"],
+            "maps_url": place["maps_url"],
+            "price_level": place.get("price_level"),
+            "latitude": place["latitude"],
+            "longitude": place["longitude"],
+            "distance_miles": place.get("distance_miles"),
+            "walk_minutes": place.get("walk_minutes"),
+            "open_now": place.get("open_now"),
+        }
+        score = pick.fit_score - DISTANCE_PENALTY_PER_MILE * (place.get("distance_miles") or 0)
+        scored.append((score, data))
+    scored.sort(key=lambda pair: pair[0], reverse=True)
+    return [data for _, data in scored[:10]]
 
 
 def check_restaurant_with_gemini(preferences: UserPreferences) -> List[FoodItem]:
@@ -1150,6 +1328,8 @@ def _places_field_mask() -> str:
             "places.googleMapsUri",
             "places.currentOpeningHours",
             "places.priceLevel",
+            "places.primaryTypeDisplayName",
+            "places.editorialSummary",
         ]
     )
 
@@ -1228,6 +1408,8 @@ def _places_new_item(raw: Mapping[str, Any]) -> Optional[dict]:
         "rating": raw.get("rating"),
         "price_level": _PLACES_PRICE_LEVELS.get(str(raw.get("priceLevel") or "")),
         "types": types,
+        "cuisine": str((raw.get("primaryTypeDisplayName") or {}).get("text") or "").strip(),
+        "summary": str((raw.get("editorialSummary") or {}).get("text") or "").strip(),
         "website": str(raw.get("websiteUri") or "").strip(),
         "maps_url": str(raw.get("googleMapsUri") or "").strip(),
     }
@@ -1256,6 +1438,7 @@ def search_google_places(
     longitude: float,
     query: str = "",
     radius_meters: int = 2500,
+    rank_preference: str = "DISTANCE",
 ) -> List[dict]:
     api_key = require_maps_api_key()
     if not api_key:
@@ -1291,7 +1474,7 @@ def search_google_places(
         body = {
             "includedTypes": ["restaurant"],
             "maxResultCount": 20,
-            "rankPreference": "DISTANCE",
+            "rankPreference": rank_preference,
             "locationRestriction": {
                 "circle": {
                     "center": {"latitude": latitude, "longitude": longitude},
@@ -1492,34 +1675,59 @@ def search_restaurants():
 
     if request.method == "POST":
         try:
-            found = search_restaurants_with_gemini(
-                preferences, filters if narrow_search else None
+            active_filters = filters if narrow_search else None
+            has_location = (
+                parse_optional_float(preferences.latitude) is not None
+                and parse_optional_float(preferences.longitude) is not None
             )
-            with ThreadPoolExecutor(max_workers=10) as pool:
-                enriched = list(
-                    pool.map(
-                        lambda item: enrich_with_place(
-                            item.model_dump(), preferences.latitude, preferences.longitude
-                        ),
-                        found,
+            if not has_location:
+                raise LookupError("Allow location access so we can find places near you.")
+            restaurants = None
+            if require_maps_api_key():
+                try:
+                    restaurants = search_nearby_ranked(preferences, active_filters)
+                except Exception as exc:
+                    if getattr(exc, "code", None) is not None:
+                        raise  # Gemini failed; the fallback would hit Gemini too.
+                    logger.warning("Places-first search failed; falling back", exc_info=True)
+            if restaurants is None:
+                found = search_restaurants_with_gemini(preferences, active_filters)
+                with ThreadPoolExecutor(max_workers=10) as pool:
+                    enriched = list(
+                        pool.map(
+                            lambda item: enrich_with_place(
+                                item.model_dump(), preferences.latitude, preferences.longitude
+                            ),
+                            found,
+                        )
                     )
+                max_miles = (
+                    active_filters.max_miles if active_filters and active_filters.max_miles
+                    else WIDE_RADIUS_MILES
                 )
-            restaurants = []
-            for data in enriched:
+                restaurants = []
+                for data in enriched:
+                    # Distance is computed here, never trusted from the model.
+                    data["distance_miles"] = None
+                    data["walk_minutes"] = None
+                    data.update(
+                        distance_fields(
+                            preferences.latitude,
+                            preferences.longitude,
+                            data.get("latitude"),
+                            data.get("longitude"),
+                        )
+                    )
+                    miles = data.get("distance_miles")
+                    if miles is not None and miles > max_miles:
+                        continue
+                    restaurants.append(data)
+            for data in restaurants:
                 data["doordash_url"] = doordash_search_url(data.get("name"))
-                # Distance is computed here, never trusted from the model.
-                data["distance_miles"] = None
-                data["walk_minutes"] = None
-                data.update(
-                    distance_fields(
-                        preferences.latitude,
-                        preferences.longitude,
-                        data.get("latitude"),
-                        data.get("longitude"),
-                    )
-                )
-                restaurants.append(data)
             save_restaurants(restaurants)
+        except LookupError as exc:
+            error = str(exc)
+            restaurants = []
         except Exception as exc:
             logger.exception("Could not search restaurants")
             error = gemini_error_message(exc, "Could not search restaurants.")
