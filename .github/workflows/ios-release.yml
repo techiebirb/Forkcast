@@ -1,0 +1,39 @@
+name: iOS release
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Release tag to attach the IPA to
+        required: true
+
+permissions:
+  contents: write
+
+jobs:
+  ipa:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+      - name: Build unsigned iOS app
+        working-directory: mobileapp
+        run: |
+          flutter pub get
+          flutter build ios --release --no-codesign --dart-define=API_BASE_URL=https://forkcast-8bt8.onrender.com
+      - name: Package IPA
+        working-directory: mobileapp
+        run: |
+          mkdir Payload
+          cp -R build/ios/iphoneos/Runner.app Payload/
+          zip -qr Forkcast-unsigned.ipa Payload
+      - name: Upload to release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.event.release.tag_name || inputs.tag }}
+        run: gh release upload "$TAG" mobileapp/Forkcast-unsigned.ipa --clobber --repo "${{ github.repository }}"
