@@ -27,3 +27,6 @@
 .ph-file-text::before { content: "\e23a"; }
 .ph-cloud-slash::before { content: "\e1b6"; }
 .ph-arrow-left::before { content: "\e058"; }
+.ph-sliders-horizontal::before { content: "\e434"; }
+.ph-caret-down::before { content: "\e136"; }
+.ph-clock::before { content: "\e19a"; }

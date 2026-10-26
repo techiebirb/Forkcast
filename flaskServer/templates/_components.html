@@ -118,7 +118,8 @@
   {%- if r.cuisine %}<span>{{ r.cuisine }}</span>{% set _ = bits.append(1) %}{% endif -%}
   {%- if r.price_level %}{% if bits %}<span class="fc-dot" aria-hidden="true">·</span>{% endif %}<span class="fc-price" aria-label="Price {{ r.price_level }} of 4">{{ "$" * r.price_level }}<span class="fc-price__off">{{ "$" * (4 - r.price_level) }}</span></span>{% set _ = bits.append(1) %}{% endif -%}
   {%- if r.walk_minutes %}{% if bits %}<span class="fc-dot" aria-hidden="true">·</span>{% endif %}<span class="fc-meta__walk">{{ icon("person-simple-walk", 16) }}{{ r.walk_minutes }} min</span>{% set _ = bits.append(1) %}{% endif -%}
-  {%- if r.distance_miles %}{% if bits %}<span class="fc-dot" aria-hidden="true">·</span>{% endif %}<span>{{ r.distance_miles | fcnum }} mi</span>{% endif -%}
+  {%- if r.distance_miles %}{% if bits %}<span class="fc-dot" aria-hidden="true">·</span>{% endif %}<span>{{ r.distance_miles | fcnum }} mi</span>{% set _ = bits.append(1) %}{% endif -%}
+  {%- if r.open_now is not none %}{% if bits %}<span class="fc-dot" aria-hidden="true">·</span>{% endif %}<span class="fc-tag fc-tag--sm {{ 'fc-tag--open' if r.open_now else 'fc-tag--closed' }}">{{ icon("clock", 16) }}{{ "Open now" if r.open_now else "Closed" }}</span>{% endif -%}
 </p>
 {%- endmacro %}
 
@@ -189,5 +190,102 @@
   {% for _ in range(rows) %}
   <div class="fc-skel__row"><span class="fc-skel__box"></span><span class="fc-skel__lines"><span style="width: 62%;"></span><span style="width: 84%;"></span><span style="width: 40%;"></span></span></div>
   {% endfor %}
+</div>
+{%- endmacro %}
+
+{# Number of narrowing filters on (sort does not count). #}
+{% macro filter_count(f) -%}
+{{ (1 if f.max_miles else 0) + (1 if f.price_levels else 0) + (1 if f.open_now else 0) + (1 if f.cuisines else 0) }}
+{%- endmacro %}
+
+{% macro miles_text(value) -%}
+{{ "½" if value == 0.5 else (value | fcnum) }}
+{%- endmacro %}
+
+{# The filter row above the results. It is a GET form, so filtering needs no
+   AI call; static/filters.js submits it on every change. #}
+{% macro filter_bar(filters, cuisines) -%}
+{%- set count = filter_count(filters) | int -%}
+<form class="fc-filters fw-filters" method="get" action="{{ url_for('search_restaurants') }}" data-autosubmit aria-label="Filter places">
+  <input type="hidden" name="filters_form" value="1">
+  <div class="fc-filter-bar fc-filter-bar--inline" role="group" aria-label="Filter places">
+    <label class="fc-filter-select{% if filters.max_miles %} is-set{% endif %}"><span class="fc-filter-select__label">Distance</span>
+      <select name="max_miles" class="fc-num">
+        <option value="">Any</option>
+        {%- for value, text in [(0.5, "½ mi"), (1, "1 mi"), (3, "3 mi"), (5, "5 mi"), (10, "10 mi")] %}
+        <option value="{{ value }}"{% if filters.max_miles == value %} selected{% endif %}>{{ text }}</option>
+        {%- endfor %}
+      </select>
+      {{ icon("caret-down", 16) }}
+    </label>
+    <div class="fc-filters__group" role="group" aria-labelledby="fw-price-label" style="gap: 4px;">
+      <span id="fw-price-label" class="fc-filters__label">Price</span>
+      {%- for level, spoken in [(1, "$, inexpensive"), (2, "$$, moderate"), (3, "$$$, pricey"), (4, "$$$$, expensive")] %}
+      <label class="fc-filter-chip fc-filter-chip--price"><input type="checkbox" name="price" value="{{ level }}" aria-label="{{ spoken }}"{% if level in filters.price_levels %} checked{% endif %}>{{ icon("check", 16) }}{{ "$" * level }}</label>
+      {%- endfor %}
+    </div>
+    <label class="fc-filter-chip"><input type="checkbox" name="open_now" value="1"{% if filters.open_now %} checked{% endif %}>{{ icon("check", 16) }}Open now</label>
+    <label class="fc-filter-select"><span class="fc-filter-select__label">Sort</span>
+      <select name="sort">
+        {%- for value, text in [("fit", "Best fit"), ("distance", "Nearest"), ("price", "Cheapest")] %}
+        <option value="{{ value }}"{% if filters.sort == value %} selected{% endif %}>{{ text }}</option>
+        {%- endfor %}
+      </select>
+      {{ icon("caret-down", 16) }}
+    </label>
+    {%- if count %}
+    <a class="fc-link fc-filter-bar__clear fw-clear" href="{{ url_for('search_restaurants', filters_form=1, sort=filters.sort) }}" aria-label="Clear {{ count }} {{ 'filter' if count == 1 else 'filters' }}">Clear</a>
+    {%- endif %}
+    <noscript><button class="fc-btn fc-btn--secondary" type="submit"><span class="fc-btn__label">Apply filters</span></button></noscript>
+  </div>
+  {%- if cuisines %}
+  <details class="fc-filters__more"{% if filters.cuisines %} open{% endif %}>
+    <summary class="fc-filter-chip">More filters<span class="fc-filters__caret" style="display: inline-flex;">{{ icon("caret-down", 16) }}</span></summary>
+    <div class="fc-filters__more-body">
+      <div class="fc-filters__group" role="group" aria-labelledby="fw-cuisine-label">
+        <span id="fw-cuisine-label" class="fc-filters__label" style="flex-basis: 100%;">Cuisine</span>
+        {%- for name in cuisines %}
+        <label class="fc-filter-chip"><input type="checkbox" name="cuisine" value="{{ name }}"{% if (name | lower) in (filters.cuisines | map("lower") | list) %} checked{% endif %}>{{ name }}</label>
+        {%- endfor %}
+      </div>
+    </div>
+  </details>
+  {%- endif %}
+</form>
+{%- endmacro %}
+
+{# "x of y places · nearest first" #}
+{% macro results_count(shown, total, filters) -%}
+{%- set phrase = {"fit": "best fit first", "distance": "nearest first", "price": "cheapest first"}[filters.sort] or "best fit first" -%}
+<p class="fc-results-count" role="status">
+  {%- if filter_count(filters) | int %}<b>{{ shown }} of {{ total }} places</b>{% else %}<b>{{ total }} {{ "place" if total == 1 else "places" }}</b>{% endif %} · {{ phrase }}
+</p>
+{%- endmacro %}
+
+{# Filters hid every place. Offers a fresh AI search with the filters, or clearing them. #}
+{% macro filtered_empty(filters) -%}
+<div class="fc-state fc-state--filtered">
+  <span class="fc-state__icon" aria-hidden="true">{{ icon("sliders-horizontal", 28) }}</span>
+  <h2 class="fc-state__title">No places match these filters</h2>
+  <ul class="fc-state__filters" aria-label="Filters on">
+    {%- if filters.max_miles %}<li><span class="fc-tag fc-tag--sm fc-num">Within {{ miles_text(filters.max_miles) }} mi</span></li>{% endif %}
+    {%- for level in filters.price_levels %}<li><span class="fc-tag fc-tag--sm fc-num">{{ "$" * level }}</span></li>{% endfor %}
+    {%- if filters.open_now %}<li><span class="fc-tag fc-tag--sm">Open now</span></li>{% endif %}
+    {%- for name in filters.cuisines %}<li><span class="fc-tag fc-tag--sm">{{ name }}</span></li>{% endfor %}
+  </ul>
+  <p class="fc-state__body">Try a wider distance or more price levels, or search again and we'll look for places that fit.</p>
+  <div class="fc-state__actions">
+    <form method="post" action="{{ url_for('search_restaurants') }}" data-loading="search">
+      <input type="hidden" name="filters_form" value="1">
+      <input type="hidden" name="apply_filters_to_search" value="1">
+      <input type="hidden" name="sort" value="{{ filters.sort }}">
+      {%- if filters.max_miles %}<input type="hidden" name="max_miles" value="{{ filters.max_miles }}">{% endif %}
+      {%- for level in filters.price_levels %}<input type="hidden" name="price" value="{{ level }}">{% endfor %}
+      {%- if filters.open_now %}<input type="hidden" name="open_now" value="1">{% endif %}
+      {%- for name in filters.cuisines %}<input type="hidden" name="cuisine" value="{{ name }}">{% endfor %}
+      <button class="fc-btn fc-btn--primary fc-btn--block" type="submit">{{ icon("magnifying-glass") }}<span class="fc-btn__label">Search again with these filters</span></button>
+    </form>
+    <a class="fc-btn fc-btn--secondary fc-btn--block" href="{{ url_for('search_restaurants', filters_form=1, sort=filters.sort) }}"><span class="fc-btn__label">Clear filters</span></a>
+  </div>
 </div>
 {%- endmacro %}

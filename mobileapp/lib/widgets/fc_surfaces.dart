@@ -48,12 +48,16 @@ class FcSeg extends StatelessWidget {
     required this.selectedIndex,
     required this.onChanged,
     this.semanticLabel,
+    this.optionLabels,
   });
 
   final List<String> options;
   final int selectedIndex;
   final ValueChanged<int> onChanged;
   final String? semanticLabel;
+
+  /// Spoken names for [options] when the visible text is short, like "½".
+  final List<String>? optionLabels;
 
   @override
   Widget build(BuildContext context) {
@@ -89,7 +93,7 @@ class FcSeg extends StatelessWidget {
       button: true,
       selected: selected,
       inMutuallyExclusiveGroup: true,
-      label: options[index],
+      label: optionLabels?[index] ?? options[index],
       excludeSemantics: true,
       onTap: () => onChanged(index),
       child: Material(

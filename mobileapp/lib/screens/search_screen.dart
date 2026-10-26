@@ -8,6 +8,7 @@ import '../theme/fc_tokens.dart';
 import '../widgets/fc_button.dart';
 import 'check_screen.dart';
 import '../widgets/fc_cards.dart';
+import '../widgets/fc_filters.dart';
 import '../widgets/fc_icons.dart';
 import '../widgets/fc_surfaces.dart';
 
@@ -22,6 +23,7 @@ class SearchScreen extends StatefulWidget {
 
 class _SearchScreenState extends State<SearchScreen> {
   _SearchPhase _phase = _SearchPhase.loading;
+  bool _searchingAgain = false;
 
   @override
   void initState() {
@@ -51,6 +53,48 @@ class _SearchScreenState extends State<SearchScreen> {
       if (mounted) {
         setState(() => _phase = _SearchPhase.error);
       }
+    }
+  }
+
+  /// "Search again": asks for new places that fit the current filters. The
+  /// old results stay on screen while it runs.
+  Future<void> _searchAgain() async {
+    final session = SessionScope.of(context);
+    setState(() => _searchingAgain = true);
+    try {
+      final error = await session.searchRestaurants(
+        session.preferences,
+        applyToSearch: true,
+      );
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _searchingAgain = false;
+        if (error != null && error.isNotEmpty) {
+          _phase = _SearchPhase.error;
+        } else if (session.restaurants.isEmpty) {
+          _phase = _SearchPhase.empty;
+        }
+      });
+    } catch (error) {
+      if (mounted) {
+        setState(() => _searchingAgain = false);
+        showApiError(context, error);
+      }
+    }
+  }
+
+  Future<void> _openFilters() async {
+    final session = SessionScope.of(context);
+    final next = await showSearchFilterSheet(
+      context,
+      initial: session.filters,
+      all: session.restaurants,
+      cuisines: session.cuisines,
+    );
+    if (next != null) {
+      session.setFilters(next);
     }
   }
 
@@ -209,25 +253,59 @@ class _SearchScreenState extends State<SearchScreen> {
           ),
         ];
       case _SearchPhase.results:
+        final shown = session.filteredRestaurants;
+        final filters = session.filters;
         return [
-          Text(
-            '${restaurants.length} ${restaurants.length == 1 ? 'place' : 'places'}'
-            ' · best fit first',
-            style: FcText.tabular(FcText.bodySm).copyWith(
-              fontWeight: FontWeight.w500,
-              color: c.textSecondary,
+          SearchFilterBar(
+            filters: filters,
+            onChanged: session.setFilters,
+            onOpenSheet: _openFilters,
+          ),
+          const SizedBox(height: FcSpace.s3),
+          Semantics(
+            liveRegion: true,
+            child: Text.rich(
+              TextSpan(
+                children: [
+                  TextSpan(
+                    text: filters.isActive
+                        ? '${shown.length} of ${restaurants.length} places'
+                        : '${restaurants.length} '
+                            '${restaurants.length == 1 ? 'place' : 'places'}',
+                    style: TextStyle(
+                      color: c.textPrimary,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                  TextSpan(text: ' · ${searchSortPhrase(filters.sort)}'),
+                ],
+              ),
+              style: FcText.tabular(FcText.bodySm).copyWith(
+                fontWeight: FontWeight.w500,
+                color: c.textSecondary,
+              ),
             ),
           ),
           const SizedBox(height: FcSpace.s3),
-          for (var i = 0; i < restaurants.length; i++) ...[
-            if (i > 0) const SizedBox(height: FcSpace.s3),
-            RestaurantCard(
-              restaurant: restaurants[i],
-              favorite: session.isFavoriteRestaurant(restaurants[i].name),
-              onFavorite: () => _toggleFavorite(restaurants[i]),
-              onCheck: () => _check(restaurants[i]),
-            ),
-          ],
+          if (shown.isEmpty)
+            FilteredEmptyState(
+              filters: filters,
+              searching: _searchingAgain,
+              onSearchAgain: _searchAgain,
+              onClear: () => session.setFilters(
+                const SearchFilters.none().copyWith(sort: filters.sort),
+              ),
+            )
+          else
+            for (var i = 0; i < shown.length; i++) ...[
+              if (i > 0) const SizedBox(height: FcSpace.s3),
+              RestaurantCard(
+                restaurant: shown[i],
+                favorite: session.isFavoriteRestaurant(shown[i].name),
+                onFavorite: () => _toggleFavorite(shown[i]),
+                onCheck: () => _check(shown[i]),
+              ),
+            ],
         ];
     }
   }

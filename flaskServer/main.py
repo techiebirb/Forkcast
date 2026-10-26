@@ -157,6 +157,41 @@ class RestaurantRecommendation(BaseModel):
         default=None,
         description="Filled in by the server. Leave null.",
     )
+    open_now: Optional[bool] = Field(
+        default=None,
+        description="Filled in by the server from Google Places. Leave null.",
+    )
+
+
+class SearchFilters(BaseModel):
+    """Result filters chosen on the places screen."""
+
+    max_miles: Optional[float] = None
+    price_levels: List[int] = Field(default_factory=list)
+    open_now: bool = False
+    cuisines: List[str] = Field(default_factory=list)
+    sort: Literal["fit", "distance", "price"] = "fit"
+
+    def is_active(self) -> bool:
+        return bool(
+            self.max_miles is not None
+            or self.price_levels
+            or self.open_now
+            or self.cuisines
+        )
+
+    def prompt_summary(self) -> str:
+        lines = []
+        if self.max_miles is not None:
+            lines.append(f"Only places within {self.max_miles:g} miles of the user.")
+        if self.price_levels:
+            levels = ", ".join("$" * level for level in sorted(self.price_levels))
+            lines.append(f"Only places with a price level of: {levels}.")
+        if self.cuisines:
+            lines.append(f"Only these cuisines: {', '.join(self.cuisines)}.")
+        if self.open_now:
+            lines.append("Only places that are open right now.")
+        return "\n".join(lines)
 
 
 class UserPreferences(BaseModel):
@@ -633,6 +668,103 @@ def save_restaurants(restaurants: List[dict]) -> None:
     _update_user({"last_restaurants": restaurants})
 
 
+def _as_list(value: Any) -> list:
+    if value is None or value == "":
+        return []
+    if isinstance(value, (list, tuple)):
+        return list(value)
+    return [part for part in str(value).split(",") if part.strip()]
+
+
+def filters_from_mapping(raw: Mapping[str, Any]) -> SearchFilters:
+    """Build SearchFilters from a JSON object or flat form/query fields."""
+    levels = []
+    for item in _as_list(raw.get("price_levels", raw.get("price"))):
+        try:
+            level = int(item)
+        except (TypeError, ValueError):
+            continue
+        if 1 <= level <= 4 and level not in levels:
+            levels.append(level)
+    cuisines = []
+    for item in _as_list(raw.get("cuisines", raw.get("cuisine"))):
+        text = str(item).strip()
+        if text and text.lower() not in (c.lower() for c in cuisines):
+            cuisines.append(text)
+    sort = str(raw.get("sort") or "fit").strip().lower()
+    max_miles = parse_optional_float(raw.get("max_miles"))
+    return SearchFilters(
+        max_miles=max_miles if max_miles and max_miles > 0 else None,
+        price_levels=sorted(levels),
+        open_now=parse_bool(raw.get("open_now")),
+        cuisines=cuisines,
+        sort=sort if sort in ("fit", "distance", "price") else "fit",
+    )
+
+
+def parse_filters() -> Optional[SearchFilters]:
+    """Filters sent with this request, or None when the request carries none."""
+    if request.is_json:
+        body = request.get_json(silent=True) or {}
+        raw = body.get("filters") if isinstance(body, dict) else None
+        if isinstance(raw, Mapping):
+            return filters_from_mapping(raw)
+    source = request.form if request.method == "POST" else request.args
+    keys = ("max_miles", "price", "open_now", "cuisine", "sort", "filters_form")
+    if not any(key in source for key in keys):
+        return None
+    raw = source.to_dict()
+    raw["price"] = source.getlist("price")
+    raw["cuisine"] = source.getlist("cuisine")
+    return filters_from_mapping(raw)
+
+
+def load_filters() -> SearchFilters:
+    stored = _user_doc().get("search_filters")
+    if not stored:
+        return SearchFilters()
+    try:
+        return SearchFilters.model_validate(stored)
+    except Exception:
+        return SearchFilters()
+
+
+def save_filters(filters: SearchFilters) -> None:
+    _update_user({"search_filters": filters.model_dump()})
+
+
+def apply_filters(restaurants: List[dict], filters: SearchFilters) -> List[dict]:
+    """Filter and sort places. A place with an unknown value is kept, not hidden."""
+    wanted_cuisines = {c.lower() for c in filters.cuisines}
+    kept = []
+    for place in restaurants:
+        miles = place.get("distance_miles")
+        if filters.max_miles is not None and miles is not None and miles > filters.max_miles:
+            continue
+        level = place.get("price_level")
+        if filters.price_levels and level is not None and level not in filters.price_levels:
+            continue
+        if filters.open_now and place.get("open_now") is False:
+            continue
+        if wanted_cuisines and str(place.get("cuisine") or "").lower() not in wanted_cuisines:
+            continue
+        kept.append(place)
+    if filters.sort == "distance":
+        kept.sort(key=lambda p: (p.get("distance_miles") is None, p.get("distance_miles") or 0))
+    elif filters.sort == "price":
+        kept.sort(key=lambda p: (p.get("price_level") is None, p.get("price_level") or 0))
+    return kept
+
+
+def cuisine_options(restaurants: List[dict]) -> List[str]:
+    seen: dict[str, str] = {}
+    for place in restaurants:
+        text = str(place.get("cuisine") or "").strip()
+        if text:
+            seen.setdefault(text.lower(), text)
+    return sorted(seen.values(), key=str.lower)
+
+
 FAVORITES_LIMIT = 100
 HISTORY_LIMIT = 20
 
@@ -825,15 +957,19 @@ def gemini_error_message(exc: Exception, fallback: str) -> str:
     return fallback
 
 
-def search_restaurants_with_gemini(preferences: UserPreferences) -> List[RestaurantRecommendation]:
+def search_restaurants_with_gemini(
+    preferences: UserPreferences, filters: Optional[SearchFilters] = None
+) -> List[RestaurantRecommendation]:
+    filter_text = filters.prompt_summary() if filters and filters.is_active() else ""
     prompt = (
-        "Recommend 5 local restaurants that are likely to have food matching these "
+        "Recommend 10 local restaurants that are likely to have food matching these "
         "nutrition and diet goals. Prefer real nearby places. Judge fit from cuisine, "
         "restaurant type, and general reputation only. Order the list from best fit "
         "to least fit. Include price_level (1 to 4) and the restaurant's latitude and "
         "longitude when search or maps shows them. Do not look up, guess, or "
         "return menus, dish names, ingredients, or macros.\n\n"
         f"{preferences.prompt_summary()}"
+        + (f"\n\nSearch filters:\n{filter_text}" if filter_text else "")
     )
     system = (
         "You are a local dining assistant. Use maps and search only to find nearby "
@@ -986,7 +1122,10 @@ def enrich_with_place(
                 address=place["address"] or data.get("address", ""),
                 latitude=place["latitude"],
                 longitude=place["longitude"],
+                open_now=place.get("open_now"),
             )
+            if place.get("price_level"):
+                data["price_level"] = place["price_level"]
             break
     return data
 
@@ -1010,6 +1149,7 @@ def _places_field_mask() -> str:
             "places.websiteUri",
             "places.googleMapsUri",
             "places.currentOpeningHours",
+            "places.priceLevel",
         ]
     )
 
@@ -1027,8 +1167,17 @@ def _place_details_field_mask() -> str:
             "websiteUri",
             "googleMapsUri",
             "currentOpeningHours",
+            "priceLevel",
         ]
     )
+
+
+_PLACES_PRICE_LEVELS = {
+    "PRICE_LEVEL_INEXPENSIVE": 1,
+    "PRICE_LEVEL_MODERATE": 2,
+    "PRICE_LEVEL_EXPENSIVE": 3,
+    "PRICE_LEVEL_VERY_EXPENSIVE": 4,
+}
 
 
 def _normalize_place_id(value: str) -> str:
@@ -1077,6 +1226,7 @@ def _places_new_item(raw: Mapping[str, Any]) -> Optional[dict]:
         "next_open_time": opening.get("nextOpenTime"),
         "next_close_time": opening.get("nextCloseTime"),
         "rating": raw.get("rating"),
+        "price_level": _PLACES_PRICE_LEVELS.get(str(raw.get("priceLevel") or "")),
         "types": types,
         "website": str(raw.get("websiteUri") or "").strip(),
         "maps_url": str(raw.get("googleMapsUri") or "").strip(),
@@ -1330,10 +1480,22 @@ def search_restaurants():
     error = None
     restaurants = load_restaurants()
 
+    sent_filters = parse_filters()
+    if sent_filters is not None:
+        save_filters(sent_filters)
+    filters = sent_filters if sent_filters is not None else load_filters()
+    # A fresh search only narrows the model's picks when asked ("Search again").
+    # A normal search starts from the full pool so filters can be loosened later.
+    narrow_search = request.method == "POST" and parse_bool(
+        request_payload().get("apply_filters_to_search")
+    )
+
     if request.method == "POST":
         try:
-            found = search_restaurants_with_gemini(preferences)
-            with ThreadPoolExecutor(max_workers=5) as pool:
+            found = search_restaurants_with_gemini(
+                preferences, filters if narrow_search else None
+            )
+            with ThreadPoolExecutor(max_workers=10) as pool:
                 enriched = list(
                     pool.map(
                         lambda item: enrich_with_place(
@@ -1363,11 +1525,16 @@ def search_restaurants():
             error = gemini_error_message(exc, "Could not search restaurants.")
             restaurants = []
 
+    cuisines = cuisine_options(restaurants)
+
     if wants_json():
+        # The app filters the full pool itself, so send it unfiltered.
         return jsonify({
             "preferences": preferences.model_dump(),
             "fooditem_targets": preferences.fooditem_targets(),
             "restaurants": restaurants,
+            "filters": filters.model_dump(),
+            "cuisines": cuisines,
             "error": error,
         })
 
@@ -1375,7 +1542,10 @@ def search_restaurants():
         "search_restaurants.html",
         preferences=preferences,
         fooditem_targets=preferences.fooditem_targets(),
-        restaurants=restaurants,
+        restaurants=apply_filters(restaurants, filters),
+        total_count=len(restaurants),
+        filters=filters,
+        cuisines=cuisines,
         error=error,
     )
 

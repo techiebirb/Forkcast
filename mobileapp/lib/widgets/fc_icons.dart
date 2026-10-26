@@ -25,6 +25,9 @@ abstract final class FcIcons {
   static const sealCheck = IconData(0xe606, fontFamily: 'Phosphor');
   static const trash = IconData(0xe4a6, fontFamily: 'Phosphor');
   static const cloudOff = IconData(0xe1b6, fontFamily: 'Phosphor');
+  static const slidersHorizontal = IconData(0xe434, fontFamily: 'Phosphor');
+  static const caretDown = IconData(0xe136, fontFamily: 'Phosphor');
+  static const clock = IconData(0xe19a, fontFamily: 'Phosphor');
 
   // Allergen glyphs.
   static const acorn = IconData(0xeb9a, fontFamily: 'Phosphor');

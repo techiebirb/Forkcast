@@ -87,6 +87,8 @@ class SessionController extends ChangeNotifier {
     restaurants = [];
     menuItems = [];
     saved = SavedData();
+    filters = const SearchFilters.none();
+    cuisines = [];
   }
 
   @override
@@ -160,10 +162,33 @@ class SessionController extends ChangeNotifier {
     }
   }
 
-  Future<String?> searchRestaurants(UserPreferences next) async {
-    final result = await api.searchRestaurants(next);
+  /// Search filters. The server returns the full pool, and the app narrows it
+  /// here so changing a filter is instant.
+  SearchFilters filters = const SearchFilters.none();
+  List<String> cuisines = [];
+
+  List<RestaurantRecommendation> get filteredRestaurants =>
+      filters.apply(restaurants);
+
+  void setFilters(SearchFilters next) {
+    filters = next;
+    notifyListeners();
+  }
+
+  /// [applyToSearch] runs a new Gemini search that takes [filters] into
+  /// account, for when the current pool has nothing that fits.
+  Future<String?> searchRestaurants(
+    UserPreferences next, {
+    bool applyToSearch = false,
+  }) async {
+    final result = await api.searchRestaurants(
+      next,
+      filters: filters,
+      applyToSearch: applyToSearch,
+    );
     preferences = result.preferences;
     restaurants = result.restaurants;
+    cuisines = result.cuisines;
     notifyListeners();
     return result.error;
   }

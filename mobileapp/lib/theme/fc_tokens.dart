@@ -18,6 +18,7 @@ class FcColors extends ThemeExtension<FcColors> {
     required this.accentPressed,
     required this.accentSoft,
     required this.onAccent,
+    required this.chipSelectedPressed,
     required this.success,
     required this.successSoft,
     required this.warning,
@@ -50,6 +51,7 @@ class FcColors extends ThemeExtension<FcColors> {
   final Color accentPressed;
   final Color accentSoft;
   final Color onAccent;
+  final Color chipSelectedPressed;
   final Color success;
   final Color successSoft;
   final Color warning;
@@ -71,6 +73,12 @@ class FcColors extends ThemeExtension<FcColors> {
   /// Keyboard focus ring color. Same as accent in both themes.
   Color get focus => accent;
 
+  /// Count badge on the Filters chip, and the edge of a selected filter chip.
+  /// Same as accent / onAccent in both themes.
+  Color get badge => accent;
+  Color get onBadge => onAccent;
+  Color get chipSelectedBorder => accent;
+
   static const light = FcColors(
     bg: Color(0xFFF6F5F1),
     surface: Color(0xFFFCFBF8),
@@ -85,6 +93,7 @@ class FcColors extends ThemeExtension<FcColors> {
     accentPressed: Color(0xFF2E5640),
     accentSoft: Color(0xFFE4EEE6),
     onAccent: Color(0xFFFCFBF8),
+    chipSelectedPressed: Color(0xFFD6E5DA),
     success: Color(0xFF1C6A62),
     successSoft: Color(0xFFDFEEEB),
     warning: Color(0xFF875A0B),
@@ -128,6 +137,7 @@ class FcColors extends ThemeExtension<FcColors> {
     accentPressed: Color(0xFFA6D0B2),
     accentSoft: Color(0xFF203028),
     onAccent: Color(0xFF13201A),
+    chipSelectedPressed: Color(0xFF2A3E33),
     success: Color(0xFF7FC6BB),
     successSoft: Color(0xFF152E2A),
     warning: Color(0xFFE2B45E),
@@ -172,6 +182,7 @@ class FcColors extends ThemeExtension<FcColors> {
     Color? accentPressed,
     Color? accentSoft,
     Color? onAccent,
+    Color? chipSelectedPressed,
     Color? success,
     Color? successSoft,
     Color? warning,
@@ -204,6 +215,7 @@ class FcColors extends ThemeExtension<FcColors> {
       accentPressed: accentPressed ?? this.accentPressed,
       accentSoft: accentSoft ?? this.accentSoft,
       onAccent: onAccent ?? this.onAccent,
+      chipSelectedPressed: chipSelectedPressed ?? this.chipSelectedPressed,
       success: success ?? this.success,
       successSoft: successSoft ?? this.successSoft,
       warning: warning ?? this.warning,
@@ -244,6 +256,7 @@ class FcColors extends ThemeExtension<FcColors> {
       accentPressed: mix(accentPressed, other.accentPressed),
       accentSoft: mix(accentSoft, other.accentSoft),
       onAccent: mix(onAccent, other.onAccent),
+      chipSelectedPressed: mix(chipSelectedPressed, other.chipSelectedPressed),
       success: mix(success, other.success),
       successSoft: mix(successSoft, other.successSoft),
       warning: mix(warning, other.warning),

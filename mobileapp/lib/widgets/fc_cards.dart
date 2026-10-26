@@ -192,6 +192,37 @@ class RestaurantMeta extends StatelessWidget {
     if (r.distanceMiles != null) {
       parts.add(Text('${fcNum(r.distanceMiles!)} mi'));
     }
+    final open = r.openNow;
+    if (open != null) {
+      parts.add(
+        Container(
+          constraints: const BoxConstraints(minHeight: 26),
+          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 2),
+          decoration: ShapeDecoration(
+            color: open ? c.accentSoft : c.surfaceSunken,
+            shape: const StadiumBorder(),
+          ),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              FcIcon(
+                FcIcons.clock,
+                size: 16,
+                color: open ? c.accentPressed : c.textSecondary,
+              ),
+              const SizedBox(width: 4),
+              Text(
+                open ? 'Open now' : 'Closed',
+                style: FcText.caption.copyWith(
+                  fontWeight: open ? FontWeight.w600 : FontWeight.w500,
+                  color: open ? c.accentPressed : c.textSecondary,
+                ),
+              ),
+            ],
+          ),
+        ),
+      );
+    }
     if (parts.isEmpty) {
       return const SizedBox.shrink();
     }

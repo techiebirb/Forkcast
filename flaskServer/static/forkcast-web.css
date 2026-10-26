@@ -103,3 +103,18 @@ select.fw-select { width: 100%; min-height: 3rem; padding: 0 var(--space-3); bor
 .fw-loading .fc-spinner { color: var(--accent); margin-top: 3px; flex: none; }
 
 .fw-note { margin-top: calc(-1 * var(--space-2)); }
+
+/* Results filters: checkbox and select controls drawn as the design's filter chips. */
+.fw-filters .fc-filters__more { display: block; }
+label.fc-filter-chip { position: relative; }
+.fc-filter-chip input[type="checkbox"] { position: absolute; inset: 0; width: 100%; height: 100%; margin: 0; opacity: 0; cursor: pointer; }
+.fc-filter-chip:has(input:checked) { background: var(--accent-soft); border-color: var(--chip-selected-border, var(--accent)); color: var(--accent-pressed); }
+.fc-filter-chip:has(input:checked) .fc-icon { color: currentColor; }
+.fc-filter-chip:has(input:checked):active { background: var(--chip-selected-pressed, var(--accent-soft)); }
+.fc-filter-chip:has(input:focus-visible) { outline: 2px solid var(--focus); outline-offset: 2px; }
+label.fc-filter-chip .ph-check { display: none; }
+label.fc-filter-chip:has(input:checked) .ph-check { display: inline-block; }
+.fw-clear { display: inline-flex; align-items: center; justify-content: center; text-decoration: none; }
+.fc-state__actions form { margin: 0; }
+.fc-state__actions .fc-btn { text-decoration: none; }
+a.fc-btn--primary .fc-btn__label { color: var(--on-accent); }

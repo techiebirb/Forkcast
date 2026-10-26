@@ -13,6 +13,10 @@ String fcNum(num value) {
 }
 
 /// Tappable pill that toggles a filter, such as an allergen. 44px tall.
+///
+/// For the results filter bar it can also be a menu chip: [trailingIcon] adds
+/// a caret, [badgeCount] a count badge, and [semanticLabel] replaces the
+/// spoken label (for example "Distance: within 1 mile").
 class FcFilterChip extends StatelessWidget {
   const FcFilterChip({
     super.key,
@@ -20,35 +24,56 @@ class FcFilterChip extends StatelessWidget {
     required this.onSelected,
     this.selected = false,
     this.icon,
+    this.trailingIcon,
+    this.badgeCount,
+    this.semanticLabel,
   });
 
   final String label;
   final bool selected;
   final IconData? icon;
+  final IconData? trailingIcon;
+  final int? badgeCount;
+  final String? semanticLabel;
   final ValueChanged<bool>? onSelected;
 
   @override
   Widget build(BuildContext context) {
     final c = context.fc;
     final fg = selected ? c.accentPressed : c.textPrimary;
+    final iconColor = selected ? c.accentPressed : c.textSecondary;
     final shape = StadiumBorder(
-      side: BorderSide(color: selected ? c.accent : c.borderStrong),
+      side: BorderSide(color: selected ? c.chipSelectedBorder : c.borderStrong),
     );
+    final spoken = badgeCount != null && badgeCount! > 0
+        ? '${semanticLabel ?? label}, $badgeCount on'
+        : (semanticLabel ?? label);
     return Semantics(
       button: true,
       selected: selected,
       enabled: onSelected != null,
-      label: label,
+      label: spoken,
       excludeSemantics: true,
       onTap: onSelected == null ? null : () => onSelected!(!selected),
       child: ConstrainedBox(
-        constraints: const BoxConstraints(minHeight: kFcTargetMin),
+        constraints: const BoxConstraints(
+          minHeight: kFcTargetMin,
+          minWidth: kFcTargetMin,
+        ),
         child: Material(
           color: selected ? c.accentSoft : c.surfaceRaised,
           shape: shape,
           child: InkWell(
             customBorder: shape,
             onTap: onSelected == null ? null : () => onSelected!(!selected),
+            splashColor: Colors.transparent,
+            highlightColor: Colors.transparent,
+            overlayColor: WidgetStateProperty.resolveWith((states) {
+              if (states.contains(WidgetState.pressed)) {
+                return selected ? c.chipSelectedPressed : c.surfaceSunken;
+              }
+              return null;
+            }),
             child: Padding(
               padding: const EdgeInsets.symmetric(
                 horizontal: 14,
@@ -58,12 +83,43 @@ class FcFilterChip extends StatelessWidget {
                 mainAxisSize: MainAxisSize.min,
                 children: [
                   if (icon != null) ...[
-                    FcIcon(icon!, size: 16, color: fg),
+                    FcIcon(icon!, size: 16, color: iconColor),
                     const SizedBox(width: 6),
                   ],
                   Flexible(
-                    child: Text(label, style: FcText.label.copyWith(color: fg)),
+                    child: Text(
+                      label,
+                      style: FcText.tabular(FcText.label).copyWith(color: fg),
+                    ),
                   ),
+                  if (badgeCount != null && badgeCount! > 0) ...[
+                    const SizedBox(width: 6),
+                    Container(
+                      constraints: const BoxConstraints(minWidth: 20),
+                      height: 20,
+                      padding: const EdgeInsets.symmetric(horizontal: 5),
+                      alignment: Alignment.center,
+                      decoration: ShapeDecoration(
+                        color: c.badge,
+                        shape: const StadiumBorder(),
+                      ),
+                      child: Text(
+                        '$badgeCount',
+                        style: FcText.tabular(
+                          const TextStyle(
+                            fontFamily: kFcFontFamily,
+                            fontSize: 12,
+                            height: 20 / 12,
+                            fontWeight: FontWeight.w700,
+                          ),
+                        ).copyWith(color: c.onBadge),
+                      ),
+                    ),
+                  ],
+                  if (trailingIcon != null) ...[
+                    const SizedBox(width: 6),
+                    FcIcon(trailingIcon!, size: 16, color: iconColor),
+                  ],
                 ],
               ),
             ),

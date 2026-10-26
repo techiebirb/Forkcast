@@ -40,11 +40,15 @@ class SearchPayload {
   SearchPayload({
     required this.preferences,
     required this.restaurants,
+    this.filters = const SearchFilters.none(),
+    this.cuisines = const [],
     this.error,
   });
 
   final UserPreferences preferences;
   final List<RestaurantRecommendation> restaurants;
+  final SearchFilters filters;
+  final List<String> cuisines;
   final String? error;
 }
 
@@ -374,10 +378,20 @@ class ApiClient {
     return SavedData.fromJson(_asMap(response.data));
   }
 
-  Future<SearchPayload> searchRestaurants(UserPreferences preferences) async {
+  /// [applyToSearch] asks Gemini to look for places that fit [filters]
+  /// ("Search again"); otherwise the filters are only saved.
+  Future<SearchPayload> searchRestaurants(
+    UserPreferences preferences, {
+    SearchFilters? filters,
+    bool applyToSearch = false,
+  }) async {
     final response = await _post(
       '/search-restaurants',
-      data: preferences.toJson(),
+      data: {
+        ...preferences.toJson(),
+        if (filters != null) 'filters': filters.toJson(),
+        if (applyToSearch) 'apply_filters_to_search': true,
+      },
     );
     _throwIfServerError(response);
     final data = _asMap(response.data);
@@ -396,6 +410,10 @@ class ApiClient {
     return SearchPayload(
       preferences: UserPreferences.fromJson(_asMap(data['preferences'])),
       restaurants: _restaurants(data['restaurants']),
+      filters: SearchFilters.fromJson(_asMap(data['filters'])),
+      cuisines: (data['cuisines'] is List)
+          ? (data['cuisines'] as List).map((e) => e.toString()).toList()
+          : const [],
       error: error,
     );
   }

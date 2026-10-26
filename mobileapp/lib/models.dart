@@ -112,6 +112,121 @@ class UserPreferences {
   }
 }
 
+enum SearchSort { fit, distance, price }
+
+/// Result filters. Same rules as `apply_filters` on the server: a place with
+/// an unknown distance, price or open status is kept rather than hidden.
+class SearchFilters {
+  const SearchFilters({
+    this.maxMiles,
+    this.priceLevels = const [],
+    this.openNow = false,
+    this.cuisines = const [],
+    this.sort = SearchSort.fit,
+  });
+
+  const SearchFilters.none() : this();
+
+  final double? maxMiles;
+  final List<int> priceLevels;
+  final bool openNow;
+  final List<String> cuisines;
+  final SearchSort sort;
+
+  /// Number of narrowing filters on (sort isn't counted).
+  int get activeCount =>
+      (maxMiles != null ? 1 : 0) +
+      (priceLevels.isNotEmpty ? 1 : 0) +
+      (openNow ? 1 : 0) +
+      (cuisines.isNotEmpty ? 1 : 0);
+
+  bool get isActive => activeCount > 0;
+
+  SearchFilters copyWith({
+    double? maxMiles,
+    bool clearMaxMiles = false,
+    List<int>? priceLevels,
+    bool? openNow,
+    List<String>? cuisines,
+    SearchSort? sort,
+  }) {
+    return SearchFilters(
+      maxMiles: clearMaxMiles ? null : (maxMiles ?? this.maxMiles),
+      priceLevels: priceLevels ?? this.priceLevels,
+      openNow: openNow ?? this.openNow,
+      cuisines: cuisines ?? this.cuisines,
+      sort: sort ?? this.sort,
+    );
+  }
+
+  factory SearchFilters.fromJson(Map<String, dynamic> json) {
+    final levels = json['price_levels'];
+    final cuisines = json['cuisines'];
+    final sort = (json['sort'] ?? 'fit').toString();
+    return SearchFilters(
+      maxMiles: _toDouble(json['max_miles']),
+      priceLevels: levels is List
+          ? levels.map((e) => _toDouble(e)?.round()).whereType<int>().toList()
+          : const [],
+      openNow: json['open_now'] == true,
+      cuisines: cuisines is List
+          ? cuisines.map((e) => e.toString()).toList()
+          : const [],
+      sort: SearchSort.values.firstWhere(
+        (value) => value.name == sort,
+        orElse: () => SearchSort.fit,
+      ),
+    );
+  }
+
+  Map<String, dynamic> toJson() => {
+        'max_miles': maxMiles,
+        'price_levels': priceLevels,
+        'open_now': openNow,
+        'cuisines': cuisines,
+        'sort': sort.name,
+      };
+
+  List<RestaurantRecommendation> apply(List<RestaurantRecommendation> all) {
+    final wanted = cuisines.map((c) => c.toLowerCase()).toSet();
+    final kept = all.where((r) {
+      final miles = r.distanceMiles;
+      if (maxMiles != null && miles != null && miles > maxMiles!) {
+        return false;
+      }
+      final level = r.priceLevel;
+      if (priceLevels.isNotEmpty &&
+          level != null &&
+          !priceLevels.contains(level)) {
+        return false;
+      }
+      if (openNow && r.openNow == false) {
+        return false;
+      }
+      if (wanted.isNotEmpty && !wanted.contains(r.cuisine.toLowerCase())) {
+        return false;
+      }
+      return true;
+    }).toList();
+    int byNullable(num? a, num? b) {
+      if (a == null && b == null) return 0;
+      if (a == null) return 1;
+      if (b == null) return -1;
+      return a.compareTo(b);
+    }
+
+    switch (sort) {
+      case SearchSort.distance:
+        kept.sort((a, b) => byNullable(a.distanceMiles, b.distanceMiles));
+      case SearchSort.price:
+        kept.sort((a, b) => byNullable(a.priceLevel, b.priceLevel));
+      case SearchSort.fit:
+        break;
+    }
+    return kept;
+  }
+}
+
 class RestaurantRecommendation {
   RestaurantRecommendation({
     required this.name,
@@ -128,6 +243,7 @@ class RestaurantRecommendation {
     this.longitude,
     this.distanceMiles,
     this.walkMinutes,
+    this.openNow,
   });
 
   final String name;
@@ -149,6 +265,9 @@ class RestaurantRecommendation {
   final double? distanceMiles;
   final int? walkMinutes;
 
+  /// From Google Places; null when unknown.
+  final bool? openNow;
+
   factory RestaurantRecommendation.fromJson(Map<String, dynamic> json) {
     return RestaurantRecommendation(
       name: (json['name'] ?? '').toString(),
@@ -165,6 +284,7 @@ class RestaurantRecommendation {
       longitude: _toDouble(json['longitude']),
       distanceMiles: _toDouble(json['distance_miles']),
       walkMinutes: _toDouble(json['walk_minutes'])?.round(),
+      openNow: json['open_now'] is bool ? json['open_now'] as bool : null,
     );
   }
 
@@ -184,6 +304,7 @@ class RestaurantRecommendation {
       'longitude': longitude,
       'distance_miles': distanceMiles,
       'walk_minutes': walkMinutes,
+      'open_now': openNow,
     };
   }
 

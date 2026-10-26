@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% from "_components.html" import appbar, pref_summary, restaurant_card, list_state %}
+{% from "_components.html" import appbar, pref_summary, restaurant_card, list_state, filter_bar, results_count, filtered_empty %}
 {% block title %}Places for you · Forkcast{% endblock %}
 
 {% block body %}
@@ -10,13 +10,18 @@
 
     {% if error %}
         {{ list_state("error", "Couldn't load places", "Check your connection and try again.", "Try again", url_for("home")) }}
-    {% elif restaurants %}
-        <p class="fw-sm fw-strong fw-muted fc-num">{{ restaurants | length }} {{ "place" if restaurants | length == 1 else "places" }} · best fit first</p>
+    {% elif total_count %}
+        {{ filter_bar(filters, cuisines) }}
+        {{ results_count(restaurants | length, total_count, filters) }}
+        {% if restaurants %}
         <div class="fw-stack">
             {% for restaurant in restaurants %}
             {{ restaurant_card(restaurant, loop.index0) }}
             {% endfor %}
         </div>
+        {% else %}
+        {{ filtered_empty(filters) }}
+        {% endif %}
     {% else %}
         {{ list_state("empty", "Nothing matched nearby",
             "Try loosening your preferences, like raising your calorie target or skipping protein. Allergy filters always stay on.",
@@ -26,3 +31,5 @@
 
 {% include "_loading.html" %}
 {% endblock %}
+
+{% block scripts %}<script src="{{ url_for('static', filename='filters.js') }}" defer></script>{% endblock %}
