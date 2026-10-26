@@ -14,6 +14,8 @@ import '../widgets/fc_surfaces.dart';
 
 enum _SearchPhase { loading, results, empty, error }
 
+const _pageSize = 10;
+
 class SearchScreen extends StatefulWidget {
   const SearchScreen({super.key});
 
@@ -24,6 +26,7 @@ class SearchScreen extends StatefulWidget {
 class _SearchScreenState extends State<SearchScreen> {
   _SearchPhase _phase = _SearchPhase.loading;
   bool _searchingAgain = false;
+  int _visible = _pageSize;
 
   @override
   void initState() {
@@ -34,7 +37,10 @@ class _SearchScreenState extends State<SearchScreen> {
   /// Runs the restaurant search with the preferences Home just stored.
   Future<void> _search() async {
     final session = SessionScope.of(context);
-    setState(() => _phase = _SearchPhase.loading);
+    setState(() {
+      _phase = _SearchPhase.loading;
+      _visible = _pageSize;
+    });
     try {
       final error = await session.searchRestaurants(session.preferences);
       if (!mounted) {
@@ -60,7 +66,10 @@ class _SearchScreenState extends State<SearchScreen> {
   /// old results stay on screen while it runs.
   Future<void> _searchAgain() async {
     final session = SessionScope.of(context);
-    setState(() => _searchingAgain = true);
+    setState(() {
+      _searchingAgain = true;
+      _visible = _pageSize;
+    });
     try {
       final error = await session.searchRestaurants(
         session.preferences,
@@ -297,14 +306,27 @@ class _SearchScreenState extends State<SearchScreen> {
               ),
             )
           else
-            for (var i = 0; i < shown.length; i++) ...[
-              if (i > 0) const SizedBox(height: FcSpace.s3),
-              RestaurantCard(
-                restaurant: shown[i],
-                favorite: session.isFavoriteRestaurant(shown[i].name),
-                onFavorite: () => _toggleFavorite(shown[i]),
-                onCheck: () => _check(shown[i]),
-              ),
+            ...[
+              for (var i = 0; i < shown.length && i < _visible; i++) ...[
+                if (i > 0) const SizedBox(height: FcSpace.s3),
+                RestaurantCard(
+                  restaurant: shown[i],
+                  favorite: session.isFavoriteRestaurant(shown[i].name),
+                  onFavorite: () => _toggleFavorite(shown[i]),
+                  onCheck: () => _check(shown[i]),
+                ),
+              ],
+              if (shown.length > _visible) ...[
+                const SizedBox(height: FcSpace.s4),
+                FcButton(
+                  label: 'Load more',
+                  variant: FcButtonVariant.secondary,
+                  large: true,
+                  block: true,
+                  icon: FcIcons.caretDown,
+                  onPressed: () => setState(() => _visible += _pageSize),
+                ),
+              ],
             ],
         ];
     }

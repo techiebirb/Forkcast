@@ -118,3 +118,7 @@ label.fc-filter-chip:has(input:checked) .ph-check { display: inline-block; }
 .fc-state__actions form { margin: 0; }
 .fc-state__actions .fc-btn { text-decoration: none; }
 a.fc-btn--primary .fc-btn__label { color: var(--on-accent); }
+
+.fw-loadmore { display: flex; justify-content: center; padding-top: var(--space-1); }
+.fw-loadmore[hidden], .fw-stack > [hidden] { display: none; }
+.fw-loadmore .fc-btn { flex: 1 1 auto; }

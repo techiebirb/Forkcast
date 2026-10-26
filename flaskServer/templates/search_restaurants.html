@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% from "_components.html" import appbar, pref_summary, restaurant_card, list_state, filter_bar, results_count, filtered_empty %}
+{% from "_components.html" import appbar, button, pref_summary, restaurant_card, list_state, filter_bar, results_count, filtered_empty %}
 {% block title %}Places for you · Forkcast{% endblock %}
 
 {% block body %}
@@ -14,11 +14,16 @@
         {{ filter_bar(filters, cuisines) }}
         {{ results_count(restaurants | length, total_count, filters) }}
         {% if restaurants %}
-        <div class="fw-stack">
+        <div class="fw-stack" data-load-more data-page-size="10">
             {% for restaurant in restaurants %}
             {{ restaurant_card(restaurant, loop.index0) }}
             {% endfor %}
         </div>
+        {% if restaurants | length > 10 %}
+        <div class="fw-loadmore" data-load-more-button hidden>
+            {{ button("Load more", variant="secondary", icon_name="caret-down", block=true, large=true) }}
+        </div>
+        {% endif %}
         {% else %}
         {{ filtered_empty(filters) }}
         {% endif %}
@@ -32,4 +37,4 @@
 {% include "_loading.html" %}
 {% endblock %}
 
-{% block scripts %}<script src="{{ url_for('static', filename='filters.js') }}" defer></script>{% endblock %}
+{% block scripts %}<script src="{{ url_for('static', filename='filters.js') }}" defer></script><script src="{{ url_for('static', filename='loadmore.js') }}" defer></script>{% endblock %}

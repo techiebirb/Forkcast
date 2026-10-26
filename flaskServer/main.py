@@ -980,7 +980,7 @@ def search_restaurants_with_gemini(
 ) -> List[RestaurantRecommendation]:
     filter_text = filters.prompt_summary() if filters and filters.is_active() else ""
     prompt = (
-        "Recommend 10 restaurants within about "
+        "Recommend 25 restaurants within about "
         f"{DEFAULT_RADIUS_MILES:g} miles of the user's location (walkable or a short "
         "ride, in the user's own neighborhood and borough, not a famous district "
         "across town). Allergies and halal/kosher are the main test of fit; the macro "
@@ -1024,6 +1024,7 @@ WIDE_RADIUS_MILES = 4.0
 MIN_CANDIDATES = 8
 METERS_PER_MILE = 1609.34
 DISTANCE_PENALTY_PER_MILE = 10
+MAX_RESULTS = 30
 
 
 def _candidate_text_queries(preferences: UserPreferences) -> List[str]:
@@ -1061,7 +1062,13 @@ def gather_candidates(
                 rank_preference="POPULARITY",
             )
 
-        jobs = [_nearby] + [
+        def _closest() -> List[dict]:
+            return search_google_places(
+                latitude=lat, longitude=lng, radius_meters=meters,
+                rank_preference="DISTANCE",
+            )
+
+        jobs = [_nearby, _closest] + [
             (lambda q=q: search_google_places(
                 latitude=lat, longitude=lng, query=q, radius_meters=meters))
             for q in queries
@@ -1107,7 +1114,7 @@ def rank_candidates_with_gemini(
             f"{place.get('summary') or ''}"
         )
     prompt = (
-        "Pick up to 10 restaurants from the candidate list that best suit this user. "
+        f"Pick up to {MAX_RESULTS} restaurants from the candidate list that best suit this user. "
         "Use only place_ids from the list. Allergies and halal/kosher are the main "
         "test: rank low any place whose food is mostly the thing the user avoids "
         "(a bakery or pasta place for someone avoiding gluten), but not places that "
@@ -1172,7 +1179,7 @@ def search_nearby_ranked(
         score = pick.fit_score - DISTANCE_PENALTY_PER_MILE * (place.get("distance_miles") or 0)
         scored.append((score, data))
     scored.sort(key=lambda pair: pair[0], reverse=True)
-    return [data for _, data in scored[:10]]
+    return [data for _, data in scored[:MAX_RESULTS]]
 
 
 def check_restaurant_with_gemini(preferences: UserPreferences) -> List[FoodItem]:
