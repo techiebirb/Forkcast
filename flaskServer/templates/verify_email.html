@@ -1,0 +1,38 @@
+{% extends "base.html" %}
+{% block title %}Add your email · Forkcast{% endblock %}
+
+{% block body %}
+<main class="fw-auth">
+    <p class="fw-wordmark">Forkcast</p>
+
+    <div class="fw-auth__head">
+        <h1 class="fw-display">Add your email</h1>
+        <p class="fw-body fw-muted">Accounts now need a verified email so you can reset your password. We'll send you a code.</p>
+    </div>
+
+    <form class="fw-auth__form" method="post" action="{{ url_for('api_email_add') }}" aria-label="Add your email">
+        {% if error %}
+        <div class="fw-alert" role="alert">
+            <i class="ph ph-warning" style="font-size: 20px" aria-hidden="true"></i>
+            <p><strong>{{ error }}</strong></p>
+        </div>
+        {% endif %}
+
+        <div class="fw-field">
+            <label for="ae-email">Email</label>
+            <div class="fa-input">
+                <input id="ae-email" type="email" name="email" autocomplete="email" required autofocus
+                    value="{{ email or '' }}">
+            </div>
+        </div>
+
+        <button class="fc-btn fc-btn--primary fc-btn--lg fc-btn--block" type="submit" style="margin-top: 8px;">
+            <span class="fc-btn__label">Send code</span>
+        </button>
+    </form>
+
+    <form method="post" action="{{ url_for('api_logout') }}" style="margin-top: 16px; text-align: center;">
+        <button type="submit" class="fc-link">Log out</button>
+    </form>
+</main>
+{% endblock %}

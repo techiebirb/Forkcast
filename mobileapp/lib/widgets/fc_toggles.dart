@@ -53,50 +53,30 @@ class _IconToggle extends StatelessWidget {
   }
 }
 
-/// Star: save or remove a restaurant.
-class FavoriteToggle extends StatelessWidget {
-  const FavoriteToggle({
-    super.key,
-    required this.pressed,
-    required this.onPressed,
-  });
-
-  final bool pressed;
-  final VoidCallback? onPressed;
-
-  @override
-  Widget build(BuildContext context) {
-    return _IconToggle(
-      pressed: pressed,
-      onPressed: onPressed,
-      outline: FcIcons.star,
-      filled: FcIcons.starFilled,
-      labelOn: 'Remove from favorites',
-      labelOff: 'Add to favorites',
-    );
-  }
-}
-
-/// Bookmark: save or remove a dish.
+/// Bookmark: save or remove a restaurant or a dish. Pass [name] so the spoken
+/// label says what a tap will do ("Remove Saffron & Salt from Saved").
 class BookmarkToggle extends StatelessWidget {
   const BookmarkToggle({
     super.key,
     required this.pressed,
     required this.onPressed,
+    this.name,
   });
 
   final bool pressed;
   final VoidCallback? onPressed;
+  final String? name;
 
   @override
   Widget build(BuildContext context) {
+    final what = name == null ? '' : ' $name';
     return _IconToggle(
       pressed: pressed,
       onPressed: onPressed,
       outline: FcIcons.bookmark,
       filled: FcIcons.bookmarkFilled,
-      labelOn: 'Remove from favorites',
-      labelOff: 'Save this meal',
+      labelOn: 'Remove$what from Saved',
+      labelOff: 'Save$what',
     );
   }
 }

@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import '../theme/fc_tokens.dart';
+import 'fc_icons.dart';
 
 /// Right-aligned numeric field with a unit, like "650 cal". Empty shows the
 /// "Any" placeholder, meaning the target is skipped.
@@ -199,12 +200,22 @@ class FcTextField extends StatefulWidget {
     this.onChanged,
     this.describedBy,
     this.enabled = true,
+    this.keyboardType,
+    this.inputFormatters,
+    this.placeholder,
+    this.code = false,
   });
 
   final String label;
   final TextEditingController controller;
   final bool hasError;
   final bool obscure;
+  final TextInputType? keyboardType;
+  final List<TextInputFormatter>? inputFormatters;
+  final String? placeholder;
+
+  /// One-time code: large, wide-spaced tabular digits, left-aligned.
+  final bool code;
   final Iterable<String>? autofillHints;
   final TextInputAction? textInputAction;
   final ValueChanged<String>? onSubmitted;
@@ -276,6 +287,8 @@ class _FcTextFieldState extends State<FcTextField> {
                     focusNode: _focus,
                     enabled: widget.enabled,
                     obscureText: widget.obscure && _hidden,
+                    keyboardType: widget.keyboardType,
+                    inputFormatters: widget.inputFormatters,
                     autocorrect: !widget.obscure,
                     enableSuggestions: !widget.obscure,
                     autofillHints: widget.autofillHints,
@@ -283,8 +296,21 @@ class _FcTextFieldState extends State<FcTextField> {
                     onSubmitted: widget.onSubmitted,
                     onChanged: widget.onChanged,
                     cursorColor: c.accent,
-                    style: FcText.body.copyWith(color: c.textPrimary),
-                    decoration: const InputDecoration(
+                    style: widget.code
+                        ? FcText.tabular(FcText.title).copyWith(
+                            fontSize: 24,
+                            height: 32 / 24,
+                            fontWeight: FontWeight.w600,
+                            letterSpacing: 9,
+                            color: c.textPrimary,
+                          )
+                        : FcText.body.copyWith(color: c.textPrimary),
+                    decoration: InputDecoration(
+                      hintText: widget.placeholder,
+                      hintStyle: FcText.body.copyWith(
+                        color: c.textSecondary,
+                        letterSpacing: 0,
+                      ),
                       isCollapsed: true,
                       filled: false,
                       border: InputBorder.none,
@@ -292,7 +318,9 @@ class _FcTextFieldState extends State<FcTextField> {
                       focusedBorder: InputBorder.none,
                       errorBorder: InputBorder.none,
                       disabledBorder: InputBorder.none,
-                      contentPadding: EdgeInsets.symmetric(vertical: 12),
+                      contentPadding: EdgeInsets.symmetric(
+                        vertical: widget.code ? 10 : 12,
+                      ),
                     ),
                   ),
                 ),
@@ -328,6 +356,38 @@ class _FcTextFieldState extends State<FcTextField> {
           ),
         ),
       ],
+    );
+  }
+}
+
+/// Error text under a field: warning icon and the message in danger color,
+/// announced when it appears. Pair with `hasError` on the field.
+class FcFieldError extends StatelessWidget {
+  const FcFieldError(this.message, {super.key});
+
+  final String message;
+
+  @override
+  Widget build(BuildContext context) {
+    final c = context.fc;
+    return Semantics(
+      liveRegion: true,
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Padding(
+            padding: const EdgeInsets.only(top: 2),
+            child: FcIcon(FcIcons.warning, size: 16, color: c.danger),
+          ),
+          const SizedBox(width: FcSpace.s2),
+          Expanded(
+            child: Text(
+              message,
+              style: FcText.label.copyWith(color: c.danger),
+            ),
+          ),
+        ],
+      ),
     );
   }
 }

@@ -1,8 +1,12 @@
+import hashlib
+import hmac
 import json
 import logging
 import math
 import os
 import random
+import re
+import secrets
 import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -17,7 +21,7 @@ from flask import Flask, g, jsonify, redirect, render_template, request, session
 from google import genai
 from google.genai import types
 from pydantic import AliasChoices, BaseModel, ConfigDict, Field
-from pymongo import MongoClient
+from pymongo import MongoClient, ReturnDocument
 from pymongo.collection import Collection
 from pymongo.errors import DuplicateKeyError
 from werkzeug.security import check_password_hash, generate_password_hash
@@ -40,6 +44,13 @@ GEMINI_ATTEMPTS_PER_MODEL = 2
 TOOLS_COOLDOWN_SECONDS = 600
 MONGO_URI = os.environ.get("MONGO_URI", "").strip()
 IS_PRODUCTION = os.environ.get("APP_ENV", "").lower() == "production"
+BREVO_API_KEY = os.environ.get("BREVO_API_KEY", "").strip()
+MAIL_FROM_EMAIL = os.environ.get("MAIL_FROM_EMAIL", "").strip()
+MAIL_FROM_NAME = os.environ.get("MAIL_FROM_NAME", "Forkcast").strip() or "Forkcast"
+CODE_TTL = timedelta(minutes=15)
+CODE_RESEND_SECONDS = 60
+CODE_MAX_ATTEMPTS = 5
+EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 logger = logging.getLogger(__name__)
 
 class FoodItem(BaseModel):
@@ -321,6 +332,10 @@ if not _secret_key:
     logger.warning("FLASK_SECRET_KEY not set; using an insecure dev key.")
     _secret_key = "dev-only-insecure-key"
 app.secret_key = _secret_key
+if IS_PRODUCTION and not (BREVO_API_KEY and MAIL_FROM_EMAIL):
+    raise RuntimeError(
+        "BREVO_API_KEY and MAIL_FROM_EMAIL must be set when APP_ENV=production."
+    )
 app.config.update(
     SESSION_COOKIE_HTTPONLY=True,
     SESSION_COOKIE_SAMESITE="Lax",
@@ -404,8 +419,146 @@ def get_users_collection() -> Collection:
     collection = mongo_client[os.environ.get("MONGO_DB_NAME", "nutrition_app")]["users"]
     if not _index_ready:
         collection.create_index("username", unique=True)
+        # Partial, so older accounts without an email don't collide on null.
+        collection.create_index(
+            "email",
+            unique=True,
+            partialFilterExpression={"email": {"$type": "string"}},
+        )
+        codes = collection.database["email_codes"]
+        codes.create_index([("email", 1), ("purpose", 1)], unique=True)
+        codes.create_index("expires_at", expireAfterSeconds=0)
         _index_ready = True
     return collection
+
+
+def get_codes_collection() -> Collection:
+    return get_users_collection().database["email_codes"]
+
+
+def normalize_email(value: Any) -> str:
+    """Lowercased address, or "" if it isn't a plausible email."""
+    email = str(value or "").strip().lower()
+    return email if len(email) <= 254 and EMAIL_RE.match(email) else ""
+
+
+def _aware(moment: datetime) -> datetime:
+    return moment if moment.tzinfo else moment.replace(tzinfo=timezone.utc)
+
+
+def send_email(to: str, subject: str, text: str, html: str) -> bool:
+    """Send through Brevo's HTTPS API (Render's free tier blocks SMTP)."""
+    if not BREVO_API_KEY:
+        if IS_PRODUCTION:
+            return False
+        logger.warning("DEV EMAIL (no BREVO_API_KEY) to %s\n%s\n%s", to, subject, text)
+        return True
+    try:
+        response = requests.post(
+            "https://api.brevo.com/v3/smtp/email",
+            headers={"api-key": BREVO_API_KEY, "accept": "application/json"},
+            json={
+                "sender": {"name": MAIL_FROM_NAME, "email": MAIL_FROM_EMAIL},
+                "to": [{"email": to}],
+                "subject": subject,
+                "textContent": text,
+                "htmlContent": html,
+            },
+            timeout=10,
+        )
+    except requests.RequestException:
+        logger.exception("Brevo request failed")
+        return False
+    if response.status_code >= 300:
+        logger.error("Brevo rejected the email (%s): %s", response.status_code, response.text[:300])
+        return False
+    return True
+
+
+def _code_hash(email: str, purpose: str, code: str) -> str:
+    message = f"{purpose}:{email}:{code}".encode()
+    return hmac.new(app.secret_key.encode(), message, hashlib.sha256).hexdigest()
+
+
+_CODE_SUBJECTS = {
+    "signup": "Confirm your Forkcast account",
+    "add_email": "Confirm your email for Forkcast",
+    "reset": "Reset your Forkcast password",
+}
+_CODE_INTROS = {
+    "signup": "Use this code to finish creating your Forkcast account.",
+    "add_email": "Use this code to confirm your email on Forkcast.",
+    "reset": "Use this code to reset your Forkcast password.",
+}
+
+
+def issue_code(email: str, purpose: str, data: dict) -> tuple[Optional[str], int]:
+    """Create and email a 6-digit code. Returns (error message, status) or (None, 200)."""
+    codes = get_codes_collection()
+    now = datetime.now(timezone.utc)
+    existing = codes.find_one({"email": email, "purpose": purpose})
+    if existing and existing.get("last_sent_at"):
+        waited = (now - _aware(existing["last_sent_at"])).total_seconds()
+        if waited < CODE_RESEND_SECONDS:
+            wait = int(CODE_RESEND_SECONDS - waited) + 1
+            return f"Please wait {wait} seconds before asking for another code.", 429
+
+    code = f"{secrets.randbelow(10**6):06d}"
+    codes.replace_one(
+        {"email": email, "purpose": purpose},
+        {
+            "email": email,
+            "purpose": purpose,
+            "code_hash": _code_hash(email, purpose, code),
+            "attempts": 0,
+            "last_sent_at": now,
+            "expires_at": now + CODE_TTL,
+            "data": data,
+        },
+        upsert=True,
+    )
+    minutes = int(CODE_TTL.total_seconds() // 60)
+    intro = _CODE_INTROS[purpose]
+    text = (
+        f"{intro}\n\nYour code: {code}\n\n"
+        f"It expires in {minutes} minutes. If you didn't ask for this, ignore this email."
+    )
+    html = (
+        f"<p>{intro}</p>"
+        f'<p style="font-size:28px;font-weight:700;letter-spacing:6px">{code}</p>'
+        f"<p>It expires in {minutes} minutes. If you didn't ask for this, ignore this email.</p>"
+    )
+    if not send_email(email, _CODE_SUBJECTS[purpose], text, html):
+        codes.delete_one({"email": email, "purpose": purpose})
+        return "Could not send the email. Check the address and try again.", 503
+    return None, 200
+
+
+def check_code(email: str, purpose: str, code: str) -> tuple[Optional[dict], Optional[str]]:
+    """Validate a submitted code. Returns (code doc, None) or (None, error message)."""
+    codes = get_codes_collection()
+    doc = codes.find_one_and_update(
+        {"email": email, "purpose": purpose},
+        {"$inc": {"attempts": 1}},
+        return_document=ReturnDocument.AFTER,
+    )
+    if not doc or _aware(doc["expires_at"]) < datetime.now(timezone.utc):
+        return None, "That code has expired. Ask for a new one."
+    if doc["attempts"] > CODE_MAX_ATTEMPTS:
+        codes.delete_one({"_id": doc["_id"]})
+        return None, "Too many wrong tries. Ask for a new code."
+    if not hmac.compare_digest(doc["code_hash"], _code_hash(email, purpose, code.strip())):
+        return None, "That code is incorrect."
+    return doc, None
+
+
+def find_user_by_identifier(identifier: str) -> Optional[dict]:
+    identifier = identifier.strip()
+    if not identifier:
+        return None
+    return get_users_collection().find_one(
+        {"$or": [{"username": identifier}, {"email": identifier.lower()}]}
+    )
 
 
 def _user_doc() -> dict:
@@ -445,11 +598,29 @@ def is_safe_redirect(target: Optional[str]) -> bool:
 
 @app.before_request
 def require_login():
-    public_endpoints = {"login_page", "signup_page", "api_login", "api_signup", "healthz", "static"}
+    public_endpoints = {
+        "login_page", "signup_page", "api_login", "api_signup", "healthz", "static",
+        "api_signup_verify", "api_code_resend", "api_password_forgot",
+        "api_password_reset", "forgot_password_page",
+    }
+    # Accounts made before email existed can only add an email until they do.
+    email_gate_allowed = {
+        "verify_email_page", "api_email_add", "api_email_verify", "api_logout",
+    }
     if request.endpoint not in public_endpoints and "username" not in session:
         if wants_json():
             return json_error("Authentication required.", 401)
         return redirect(url_for("login_page", next=request.full_path))
+    if (
+        session.get("needs_email")
+        and request.endpoint not in public_endpoints
+        and request.endpoint not in email_gate_allowed
+    ):
+        if wants_json():
+            response = jsonify({"error": "Add and verify your email to continue.", "needs_email": True})
+            response.status_code = 403
+            return response
+        return redirect(url_for("verify_email_page"))
 
 
 @app.route("/healthz", methods=["GET"])
@@ -462,7 +633,12 @@ def login_page():
     next_url = request.args.get("next", "")
     if "username" in session:
         if wants_json():
-            return jsonify({"authenticated": True, "username": session["username"], "next": next_url})
+            return jsonify({
+                "authenticated": True,
+                "username": session["username"],
+                "needs_email": bool(session.get("needs_email")),
+                "next": next_url,
+            })
         return redirect(url_for("home"))
     if wants_json():
         return jsonify({"authenticated": False, "username": None, "next": next_url})
@@ -484,45 +660,266 @@ def signup_page():
 def api_signup():
     payload = request_payload()
     username = str(payload_get(payload, "username") or "").strip()
+    raw_email = str(payload_get(payload, "email") or "")
+    email = normalize_email(raw_email)
     password = str(payload_get(payload, "password") or "")
-    if len(username) < 3 or len(password) < 4:
-        message = "Username must be at least 3 characters and password at least 4 characters."
-        if wants_json():
-            return json_error(message, 400)
-        return render_template("signup.html", error=message), 400
 
-    try:
-        get_users_collection().insert_one({
-            "username": username,
-            "password_hash": generate_password_hash(password),
-        })
-    except DuplicateKeyError:
-        message = "That username is already taken."
-        suggestions = username_suggestions(username)
+    def fail(message: str, status: int, extra: Optional[dict] = None, **context):
         if wants_json():
-            response = jsonify({"error": message, "suggestions": suggestions})
-            response.status_code = 409
+            response = jsonify({"error": message, **(extra or {})})
+            response.status_code = status
             return response
         return (
             render_template(
-                "signup.html",
-                error=message,
-                username_taken=True,
-                suggestions=suggestions,
-                username=username,
+                "signup.html", error=message, username=username, email=raw_email.strip(), **context
             ),
-            409,
+            status,
+        )
+
+    if len(username) < 3 or len(password) < 4:
+        return fail("Username must be at least 3 characters and password at least 4 characters.", 400)
+    if "@" in username:
+        return fail("Usernames can't contain @.", 400, {"field": "username"})
+    if not email:
+        return fail("Enter a valid email address.", 400, {"field": "email"}, email_error=True)
+
+    try:
+        users = get_users_collection()
+        if users.find_one({"username": username}):
+            suggestions = username_suggestions(username)
+            return fail(
+                "That username is already taken.", 409, {"suggestions": suggestions},
+                username_taken=True, suggestions=suggestions,
+            )
+        if users.find_one({"email": email}):
+            return fail(
+                "An account with that email already exists. Try logging in.", 409,
+                {"email_taken": True, "field": "email"}, email_error=True,
+            )
+        error, status = issue_code(
+            email, "signup",
+            {"username": username, "password_hash": generate_password_hash(password)},
         )
     except Exception:
-        logger.exception("Could not create account")
-        message = "Could not create account."
-        if wants_json():
-            return json_error(message, 503)
-        return render_template("signup.html", error=message), 503
+        logger.exception("Could not start signup")
+        return fail("Could not create account.", 503)
+    if error:
+        return fail(error, status)
 
+    if wants_json():
+        return jsonify({"pending": True, "email": email})
+    return render_verify("signup", email=email)
+
+
+def render_verify(purpose: str, email: str = "", identifier: str = "",
+                  error: Optional[str] = None, info: Optional[str] = None, status: int = 200):
+    """The code-entry page shared by signup, password reset and add-email."""
+    return (
+        render_template(
+            "verify_code.html", purpose=purpose, email=email, identifier=identifier,
+            error=error, info=info,
+        ),
+        status,
+    )
+
+
+def verify_fail(purpose: str, message: str, status: int = 400, email: str = "", identifier: str = ""):
+    if wants_json():
+        return json_error(message, status)
+    return render_verify(purpose, email=email, identifier=identifier, error=message, status=status)
+
+
+def start_session(username: str, needs_email: bool = False) -> None:
     session.clear()
     session["username"] = username
+    session["needs_email"] = needs_email
     session.permanent = True
+
+
+@app.route("/api/signup/verify", methods=["POST"])
+def api_signup_verify():
+    payload = request_payload()
+    email = normalize_email(payload_get(payload, "email"))
+    code = str(payload_get(payload, "code") or "")
+    try:
+        doc, error = check_code(email, "signup", code)
+        if error:
+            return verify_fail("signup", error, email=email)
+        data = doc["data"]
+        get_users_collection().insert_one({
+            "username": data["username"],
+            "email": email,
+            "email_verified": True,
+            "password_hash": data["password_hash"],
+        })
+        get_codes_collection().delete_one({"_id": doc["_id"]})
+    except DuplicateKeyError:
+        get_codes_collection().delete_one({"email": email, "purpose": "signup"})
+        return verify_fail(
+            "signup", "That username or email was just taken. Start signing up again.", 409, email=email
+        )
+    except Exception:
+        logger.exception("Could not finish signup")
+        return verify_fail("signup", "Could not create account.", 503, email=email)
+
+    start_session(data["username"])
+    if wants_json():
+        return jsonify({"username": data["username"]})
+    return redirect(url_for("home"))
+
+
+def _send_reset_code(identifier: str) -> None:
+    """Email a reset code if the account exists. Never reveals whether it does."""
+    user = find_user_by_identifier(identifier)
+    if user and user.get("email"):
+        error, _ = issue_code(user["email"], "reset", {"username": user["username"]})
+        if error:
+            logger.info("Reset code not sent: %s", error)
+
+
+@app.route("/forgot-password", methods=["GET"])
+def forgot_password_page():
+    return render_template("forgot_password.html", error=None)
+
+
+@app.route("/api/password/forgot", methods=["POST"])
+def api_password_forgot():
+    identifier = str(payload_get(request_payload(), "identifier") or "").strip()
+    if not identifier:
+        message = "Enter your username or email."
+        if wants_json():
+            return json_error(message, 400)
+        return render_template("forgot_password.html", error=message), 400
+    try:
+        _send_reset_code(identifier)
+    except Exception:
+        logger.exception("Could not start password reset")
+        message = "Could not send the code. Try again."
+        if wants_json():
+            return json_error(message, 503)
+        return render_template("forgot_password.html", error=message), 503
+    if wants_json():
+        return jsonify({"ok": True})
+    return render_verify(
+        "reset", identifier=identifier,
+        info="If that account exists, we sent a code to its email.",
+    )
+
+
+@app.route("/api/password/reset", methods=["POST"])
+def api_password_reset():
+    payload = request_payload()
+    identifier = str(payload_get(payload, "identifier") or "").strip()
+    code = str(payload_get(payload, "code") or "")
+    new_password = str(payload_get(payload, "new_password") or "")
+    if len(new_password) < 4:
+        return verify_fail("reset", "Password must be at least 4 characters.", identifier=identifier)
+    try:
+        user = find_user_by_identifier(identifier)
+        email = (user or {}).get("email", "")
+        doc, error = check_code(email, "reset", code) if user and email else (None, "That code is incorrect.")
+        if error:
+            return verify_fail("reset", error, identifier=identifier)
+        get_users_collection().update_one(
+            {"_id": user["_id"]}, {"$set": {"password_hash": generate_password_hash(new_password)}}
+        )
+        get_codes_collection().delete_one({"_id": doc["_id"]})
+    except Exception:
+        logger.exception("Could not reset password")
+        return verify_fail("reset", "Could not reset your password.", 503, identifier=identifier)
+
+    start_session(user["username"])
+    if wants_json():
+        return jsonify({"username": user["username"]})
+    return redirect(url_for("home"))
+
+
+@app.route("/api/code/resend", methods=["POST"])
+def api_code_resend():
+    payload = request_payload()
+    purpose = str(payload_get(payload, "purpose") or "")
+    email = normalize_email(payload_get(payload, "email"))
+    identifier = str(payload_get(payload, "identifier") or "").strip()
+    info = "A new code is on its way."
+    try:
+        if purpose == "reset":
+            _send_reset_code(identifier)
+        elif purpose in ("signup", "add_email"):
+            if purpose == "add_email" and "username" not in session:
+                return json_error("Authentication required.", 401)
+            existing = get_codes_collection().find_one({"email": email, "purpose": purpose})
+            if not existing or (
+                purpose == "add_email" and existing["data"].get("username") != session["username"]
+            ):
+                return verify_fail(purpose, "That request expired. Start again.", 400, email=email)
+            error, status = issue_code(email, purpose, existing["data"])
+            if error:
+                return verify_fail(purpose, error, status, email=email)
+        else:
+            return json_error("Unknown request.", 400)
+    except Exception:
+        logger.exception("Could not resend code")
+        return verify_fail(purpose, "Could not send the code. Try again.", 503, email=email, identifier=identifier)
+    if wants_json():
+        return jsonify({"ok": True})
+    return render_verify(purpose, email=email, identifier=identifier, info=info)
+
+
+@app.route("/verify-email", methods=["GET"])
+def verify_email_page():
+    if not session.get("needs_email"):
+        return redirect(url_for("home"))
+    return render_template("verify_email.html", error=None)
+
+
+@app.route("/api/email/add", methods=["POST"])
+def api_email_add():
+    raw_email = str(payload_get(request_payload(), "email") or "")
+    email = normalize_email(raw_email)
+
+    def fail(message: str, status: int):
+        if wants_json():
+            return json_error(message, status)
+        return render_template("verify_email.html", error=message, email=raw_email.strip()), status
+
+    if not email:
+        return fail("Enter a valid email address.", 400)
+    try:
+        if get_users_collection().find_one({"email": email}):
+            return fail("Another account already uses that email.", 409)
+        error, status = issue_code(email, "add_email", {"username": session["username"]})
+    except Exception:
+        logger.exception("Could not start email verification")
+        return fail("Could not send the code. Try again.", 503)
+    if error:
+        return fail(error, status)
+    if wants_json():
+        return jsonify({"pending": True, "email": email})
+    return render_verify("add_email", email=email)
+
+
+@app.route("/api/email/verify", methods=["POST"])
+def api_email_verify():
+    payload = request_payload()
+    email = normalize_email(payload_get(payload, "email"))
+    code = str(payload_get(payload, "code") or "")
+    username = session["username"]
+    try:
+        doc, error = check_code(email, "add_email", code)
+        if error:
+            return verify_fail("add_email", error, email=email)
+        if doc["data"].get("username") != username:
+            return verify_fail("add_email", "That code is incorrect.", email=email)
+        get_users_collection().update_one(
+            {"username": username}, {"$set": {"email": email, "email_verified": True}}
+        )
+        get_codes_collection().delete_one({"_id": doc["_id"]})
+    except DuplicateKeyError:
+        return verify_fail("add_email", "Another account already uses that email.", 409, email=email)
+    except Exception:
+        logger.exception("Could not verify email")
+        return verify_fail("add_email", "Could not verify your email.", 503, email=email)
+    session["needs_email"] = False
     if wants_json():
         return jsonify({"username": username})
     return redirect(url_for("home"))
@@ -531,11 +928,13 @@ def api_signup():
 @app.route("/api/login", methods=["POST"])
 def api_login():
     payload = request_payload()
-    username = str(payload_get(payload, "username") or "").strip()
+    username = str(
+        payload_get(payload, "identifier") or payload_get(payload, "username") or ""
+    ).strip()
     password = str(payload_get(payload, "password") or "")
     next_url = str(payload_get(payload, "next") or "")
     try:
-        user = get_users_collection().find_one({"username": username})
+        user = find_user_by_identifier(username)
     except Exception:
         logger.exception("Could not log in")
         message = "Could not log in."
@@ -544,7 +943,7 @@ def api_login():
         return render_template("login.html", error=message, next_url=next_url), 503
 
     if not user or not check_password_hash(user["password_hash"], password):
-        message = "Invalid username or password."
+        message = "Invalid username/email or password."
         if wants_json():
             return json_error(message, 401)
         return (
@@ -558,12 +957,17 @@ def api_login():
             401,
         )
 
-    session.clear()
-    session["username"] = user["username"]
-    session.permanent = True
+    needs_email = not user.get("email")
+    start_session(user["username"], needs_email)
     destination = next_url if is_safe_redirect(next_url) else url_for("home")
+    if needs_email:
+        destination = url_for("verify_email_page")
     if wants_json():
-        return jsonify({"username": user["username"], "next": destination})
+        return jsonify({
+            "username": user["username"],
+            "needs_email": needs_email,
+            "next": destination,
+        })
     return redirect(destination)
 
 
@@ -1568,6 +1972,7 @@ def resolve_restaurant(name: str, restaurants: List[dict]) -> dict:
 def home_json_payload(preferences: UserPreferences) -> dict:
     return {
         "username": session.get("username"),
+        "email": _user_doc().get("email"),
         "preferences": preferences.model_dump(),
         "restaurants": load_restaurants(),
         "saved": saved_payload(),

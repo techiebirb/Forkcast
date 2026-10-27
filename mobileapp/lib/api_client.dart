@@ -10,7 +10,13 @@ import 'config.dart';
 import 'models.dart';
 
 class ApiException implements Exception {
-  ApiException(this.message, {this.statusCode, this.suggestions = const []});
+  ApiException(
+    this.message, {
+    this.statusCode,
+    this.suggestions = const [],
+    this.emailTaken = false,
+    this.field,
+  });
 
   final String message;
   final int? statusCode;
@@ -18,8 +24,24 @@ class ApiException implements Exception {
   /// Free usernames the server offers when a signup name is already taken.
   final List<String> suggestions;
 
+  /// True when a signup 409 is about the email, not the username.
+  final bool emailTaken;
+
+  /// Which signup field a 400/409 is about (`username` or `email`), if any.
+  final String? field;
+
   @override
   String toString() => message;
+}
+
+/// Result of logging in or finishing signup / password reset.
+class AuthResult {
+  const AuthResult(this.username, {this.needsEmail = false});
+
+  final String username;
+
+  /// An older account with no verified email yet.
+  final bool needsEmail;
 }
 
 class HomePayload {
@@ -28,9 +50,11 @@ class HomePayload {
     required this.preferences,
     required this.restaurants,
     required this.saved,
+    this.email,
   });
 
   final String? username;
+  final String? email;
   final UserPreferences preferences;
   final List<RestaurantRecommendation> restaurants;
   final SavedData saved;
@@ -77,7 +101,16 @@ class ApiClient {
   /// True while the server looks like it is cold-starting (Render free tier).
   final ValueNotifier<bool> serverWaking = ValueNotifier(false);
 
-  static const _authPaths = {'/api/login', '/api/signup', '/login', '/healthz'};
+  static const _authPaths = {
+    '/api/login',
+    '/api/signup',
+    '/api/signup/verify',
+    '/api/password/forgot',
+    '/api/password/reset',
+    '/api/code/resend',
+    '/login',
+    '/healthz',
+  };
 
   static const _sleepAfter = Duration(minutes: 14);
   static const _wakingDelay = Duration(seconds: 3);
@@ -289,30 +322,103 @@ class ApiClient {
     }
   }
 
-  Future<bool> isAuthenticated() async {
+  /// The signed-in user, or null when there is no session.
+  Future<AuthResult?> currentAuth() async {
     final response = await _get('/login');
     _throwIfServerError(response);
     if (response.statusCode == 401) {
-      return false;
+      return null;
     }
     final data = _asMap(response.data);
-    return data['authenticated'] == true;
+    if (data['authenticated'] != true) {
+      return null;
+    }
+    return AuthResult(
+      (data['username'] ?? '').toString(),
+      needsEmail: data['needs_email'] == true,
+    );
   }
 
-  Future<String> login(String username, String password) async {
+  AuthResult _readAuth(Response<dynamic> response) {
+    final username = _readUsername(response);
+    final data = _asMap(response.data);
+    return AuthResult(username, needsEmail: data['needs_email'] == true);
+  }
+
+  Future<AuthResult> login(String identifier, String password) async {
     final response = await _post(
       '/api/login',
-      data: {'username': username, 'password': password},
+      data: {'identifier': identifier, 'password': password},
     );
-    return _readUsername(response);
+    return _readAuth(response);
   }
 
-  Future<String> signup(String username, String password) async {
+  /// Step 1 of signup: the server emails a code. No account exists yet.
+  Future<void> signup(String username, String email, String password) async {
     final response = await _post(
       '/api/signup',
-      data: {'username': username, 'password': password},
+      data: {'username': username, 'email': email, 'password': password},
     );
-    return _readUsername(response);
+    _readUsername(response, expectUsername: false);
+  }
+
+  /// Step 2 of signup: the code creates the account and signs in.
+  Future<AuthResult> verifySignup(String email, String code) async {
+    final response = await _post(
+      '/api/signup/verify',
+      data: {'email': email, 'code': code},
+    );
+    return _readAuth(response);
+  }
+
+  Future<void> forgotPassword(String identifier) async {
+    final response = await _post(
+      '/api/password/forgot',
+      data: {'identifier': identifier},
+    );
+    _throwIfError(response);
+  }
+
+  Future<AuthResult> resetPassword(
+    String identifier,
+    String code,
+    String newPassword,
+  ) async {
+    final response = await _post(
+      '/api/password/reset',
+      data: {
+        'identifier': identifier,
+        'code': code,
+        'new_password': newPassword,
+      },
+    );
+    return _readAuth(response);
+  }
+
+  /// [purpose] is `signup`, `add_email` or `reset`.
+  Future<void> resendCode(
+    String purpose, {
+    String email = '',
+    String identifier = '',
+  }) async {
+    final response = await _post(
+      '/api/code/resend',
+      data: {'purpose': purpose, 'email': email, 'identifier': identifier},
+    );
+    _throwIfError(response);
+  }
+
+  Future<void> addEmail(String email) async {
+    final response = await _post('/api/email/add', data: {'email': email});
+    _throwIfError(response);
+  }
+
+  Future<void> verifyEmail(String email, String code) async {
+    final response = await _post(
+      '/api/email/verify',
+      data: {'email': email, 'code': code},
+    );
+    _readUsername(response);
   }
 
   Future<void> logout() async {
@@ -326,6 +432,7 @@ class ApiClient {
     final data = _asMap(response.data);
     return HomePayload(
       username: data['username']?.toString(),
+      email: data['email']?.toString(),
       preferences: UserPreferences.fromJson(_asMap(data['preferences'])),
       restaurants: _restaurants(data['restaurants']),
       saved: SavedData.fromJson(_asMap(data['saved'])),
@@ -493,7 +600,8 @@ class ApiClient {
     );
   }
 
-  String _readUsername(Response<dynamic> response) {
+  String _readUsername(Response<dynamic> response,
+      {bool expectUsername = true}) {
     _throwIfServerError(response);
     final data = _asMap(response.data);
     if (response.statusCode != null && response.statusCode! >= 400) {
@@ -503,9 +611,11 @@ class ApiClient {
         suggestions: (data['suggestions'] as List<dynamic>? ?? [])
             .map((item) => item.toString())
             .toList(),
+        emailTaken: data['email_taken'] == true,
+        field: data['field']?.toString(),
       );
     }
-    return (data['username'] ?? '').toString();
+    return expectUsername ? (data['username'] ?? '').toString() : '';
   }
 
   void _throwIfError(Response<dynamic> response) {

@@ -1,0 +1,85 @@
+{% extends "base.html" %}
+{% set titles = {"signup": "Confirm your email", "add_email": "Confirm your email", "reset": "Reset your password"} %}
+{% block title %}{{ titles[purpose] }} · Forkcast{% endblock %}
+
+{% block body %}
+{% set action = {"signup": url_for('api_signup_verify'), "add_email": url_for('api_email_verify'), "reset": url_for('api_password_reset')}[purpose] %}
+<main class="fw-auth">
+    <p class="fw-wordmark">Forkcast</p>
+
+    <div class="fw-auth__head">
+        <h1 class="fw-display">{{ titles[purpose] }}</h1>
+        <p class="fw-body fw-muted">
+            {% if email %}We sent a 6-digit code to <strong>{{ email }}</strong>. It expires in 15 minutes.
+            {% else %}Enter the 6-digit code we emailed you. It expires in 15 minutes.{% endif %}
+        </p>
+    </div>
+
+    <form class="fw-auth__form" method="post" action="{{ action }}" aria-label="{{ titles[purpose] }}">
+        <input type="hidden" name="email" value="{{ email }}">
+        <input type="hidden" name="identifier" value="{{ identifier }}">
+
+        {% if error %}
+        <div class="fw-alert" role="alert">
+            <i class="ph ph-warning" style="font-size: 20px" aria-hidden="true"></i>
+            <p><strong>{{ error }}</strong></p>
+        </div>
+        {% elif info %}
+        <p class="fc-field__hint" role="status">
+            <i class="ph ph-info fc-icon" style="font-size: 16px" aria-hidden="true"></i>
+            <span>{{ info }}</span>
+        </p>
+        {% endif %}
+
+        <div class="fw-field">
+            <label for="vc-code">Code</label>
+            <div class="fa-input{% if error %} is-error{% endif %}">
+                <input id="vc-code" type="text" name="code" inputmode="numeric" pattern="[0-9]{6}" maxlength="6"
+                    autocomplete="one-time-code" required autofocus>
+            </div>
+        </div>
+
+        {% if purpose == "reset" %}
+        <div class="fw-field">
+            <label for="vc-pass">New password</label>
+            <div class="fa-input">
+                <input id="vc-pass" type="password" name="new_password" autocomplete="new-password" required minlength="4"
+                    aria-describedby="vc-pass-note">
+                <button type="button" class="fc-link" data-toggle-password="vc-pass" aria-label="Show password">Show</button>
+            </div>
+            <p class="fc-field__hint" id="vc-pass-note">
+                <i class="ph ph-info fc-icon" style="font-size: 16px" aria-hidden="true"></i>
+                <span>At least 4 characters</span>
+            </p>
+        </div>
+        {% endif %}
+
+        <button class="fc-btn fc-btn--primary fc-btn--lg fc-btn--block" type="submit" style="margin-top: 8px;">
+            <span class="fc-btn__label">{{ "Reset password" if purpose == "reset" else "Confirm" }}</span>
+        </button>
+    </form>
+
+    <form method="post" action="{{ url_for('api_code_resend') }}" style="margin-top: 16px; text-align: center;">
+        <input type="hidden" name="purpose" value="{{ purpose }}">
+        <input type="hidden" name="email" value="{{ email }}">
+        <input type="hidden" name="identifier" value="{{ identifier }}">
+        <button type="submit" class="fc-link">Send a new code</button>
+    </form>
+
+    <p class="fw-auth__foot"><a href="{{ url_for('login_page') }}">Back to log in</a></p>
+</main>
+{% endblock %}
+
+{% block scripts %}
+<script>
+    document.querySelectorAll("[data-toggle-password]").forEach(function (button) {
+        button.addEventListener("click", function () {
+            var input = document.getElementById(button.dataset.togglePassword);
+            var hidden = input.type === "password";
+            input.type = hidden ? "text" : "password";
+            button.textContent = hidden ? "Hide" : "Show";
+            button.setAttribute("aria-label", hidden ? "Hide password" : "Show password");
+        });
+    });
+</script>
+{% endblock %}

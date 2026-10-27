@@ -1,4 +1,7 @@
-import 'package:flutter/foundation.dart';
+import 'dart:io';
+
+import 'package:flutter/material.dart';
+import 'package:path_provider/path_provider.dart';
 
 import 'api_client.dart';
 import 'models.dart';
@@ -12,8 +15,19 @@ class SessionController extends ChangeNotifier {
 
   bool ready = false;
   bool authenticated = false;
+
+  /// Signed in, but an older account that still has to add and verify an email.
+  bool needsEmail = false;
   String? startupError;
   String? username;
+  String? email;
+
+  /// Light, dark, or follow the phone. Kept on the device, not the account.
+  ThemeMode themeMode = ThemeMode.system;
+
+  /// Set while the Check screen shows a menu reopened from History, so it can
+  /// say when the check happened. Cleared when a fresh check starts.
+  HistoryEntry? reopenedFrom;
   UserPreferences preferences = UserPreferences();
   List<RestaurantRecommendation> restaurants = [];
   List<FoodItem> menuItems = [];
@@ -21,8 +35,8 @@ class SessionController extends ChangeNotifier {
 
   static String _key(String value) => value.trim().toLowerCase();
 
-  bool isFavoriteRestaurant(String name) => saved.favoriteRestaurants
-      .any((item) => _key(item.name) == _key(name));
+  bool isFavoriteRestaurant(String name) =>
+      saved.favoriteRestaurants.any((item) => _key(item.name) == _key(name));
 
   bool isFavoriteMeal(String restaurantName, String itemName) =>
       saved.favoriteMeals.any(
@@ -66,6 +80,7 @@ class SessionController extends ChangeNotifier {
 
   /// Shows a saved menu on the check screen without calling Gemini again.
   void openHistoryEntry(HistoryEntry entry) {
+    reopenedFrom = entry;
     menuItems = entry.menuItems;
     rememberRestaurant(entry.restaurant);
     preferences = preferences.copyWith(restaurantName: entry.restaurant.name);
@@ -82,7 +97,10 @@ class SessionController extends ChangeNotifier {
 
   void _clearLocal() {
     authenticated = false;
+    needsEmail = false;
     username = null;
+    email = null;
+    reopenedFrom = null;
     preferences = UserPreferences();
     restaurants = [];
     menuItems = [];
@@ -95,6 +113,42 @@ class SessionController extends ChangeNotifier {
   void dispose() {
     api.sessionExpired.removeListener(_onSessionExpired);
     super.dispose();
+  }
+
+  Future<File?> _themeFile() async {
+    try {
+      final dir = await getApplicationSupportDirectory();
+      return File('${dir.path}/theme_mode.txt');
+    } catch (_) {
+      return null;
+    }
+  }
+
+  /// Reads the saved theme choice. Call before the first frame.
+  Future<void> loadThemeMode() async {
+    try {
+      final file = await _themeFile();
+      if (file != null && await file.exists()) {
+        themeMode = switch ((await file.readAsString()).trim()) {
+          'light' => ThemeMode.light,
+          'dark' => ThemeMode.dark,
+          _ => ThemeMode.system,
+        };
+      }
+    } catch (_) {
+      // Fall back to following the phone.
+    }
+  }
+
+  Future<void> setThemeMode(ThemeMode mode) async {
+    themeMode = mode;
+    notifyListeners();
+    try {
+      final file = await _themeFile();
+      await file?.writeAsString(mode.name);
+    } catch (_) {
+      // The choice still applies for this session.
+    }
   }
 
   Future<void> retryStartup() async {
@@ -116,9 +170,10 @@ class SessionController extends ChangeNotifier {
       return;
     }
     try {
-      authenticated = await api.isAuthenticated();
-      if (authenticated) {
-        await refreshHome();
+      final auth = await api.currentAuth();
+      authenticated = auth != null;
+      if (auth != null) {
+        await _finishAuth(auth);
       }
     } catch (_) {
       authenticated = false;
@@ -131,6 +186,7 @@ class SessionController extends ChangeNotifier {
   Future<void> refreshHome() async {
     final home = await api.getHome();
     username = home.username;
+    email = home.email;
     preferences = home.preferences;
     restaurants = home.restaurants;
     saved = home.saved;
@@ -138,15 +194,36 @@ class SessionController extends ChangeNotifier {
     notifyListeners();
   }
 
-  Future<void> login(String name, String password) async {
-    username = await api.login(name, password);
+  /// Records a successful sign-in, then loads the home data unless the
+  /// account still has to add an email.
+  Future<void> _finishAuth(AuthResult auth) async {
+    username = auth.username;
     authenticated = true;
+    needsEmail = auth.needsEmail;
+    if (needsEmail) {
+      notifyListeners();
+      return;
+    }
     await refreshHome();
   }
 
-  Future<void> signup(String name, String password) async {
-    username = await api.signup(name, password);
-    authenticated = true;
+  /// [identifier] is a username or an email.
+  Future<void> login(String identifier, String password) async =>
+      _finishAuth(await api.login(identifier, password));
+
+  Future<void> verifySignup(String email, String code) async =>
+      _finishAuth(await api.verifySignup(email, code));
+
+  Future<void> resetPassword(
+    String identifier,
+    String code,
+    String newPassword,
+  ) async =>
+      _finishAuth(await api.resetPassword(identifier, code, newPassword));
+
+  Future<void> verifyEmail(String email, String code) async {
+    await api.verifyEmail(email, code);
+    needsEmail = false;
     await refreshHome();
   }
 
@@ -203,7 +280,8 @@ class SessionController extends ChangeNotifier {
     if (chosen.isNotEmpty) {
       final existing = remembered.where((item) => item.name.trim() == chosen);
       for (final item in existing) {
-        if (!restaurants.any((restaurant) => restaurant.name.trim() == chosen)) {
+        if (!restaurants
+            .any((restaurant) => restaurant.name.trim() == chosen)) {
           restaurants = [item, ...restaurants];
         }
       }
@@ -221,6 +299,7 @@ class SessionController extends ChangeNotifier {
   /// header has its address and links while the menu loads.
   void beginCheck(RestaurantRecommendation restaurant) {
     final cleaned = restaurant.name.trim();
+    reopenedFrom = null;
     menuItems = [];
     preferences = preferences.copyWith(restaurantName: cleaned);
     if (cleaned.isNotEmpty &&

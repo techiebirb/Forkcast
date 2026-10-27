@@ -9,6 +9,7 @@ import '../widgets/fc_chips.dart';
 import '../widgets/fc_form.dart';
 import '../widgets/fc_icons.dart';
 import '../widgets/fc_surfaces.dart';
+import 'verify_code_screen.dart';
 
 class SignupScreen extends StatefulWidget {
   const SignupScreen({super.key});
@@ -19,8 +20,12 @@ class SignupScreen extends StatefulWidget {
 
 class _SignupScreenState extends State<SignupScreen> {
   final _username = TextEditingController();
+  final _email = TextEditingController();
   final _password = TextEditingController();
   bool _busy = false;
+
+  /// Set when the server says an account already uses the email (HTTP 409).
+  String? _emailError;
 
   /// Banner for errors that are not about the username (validation, network).
   String? _error;
@@ -32,6 +37,7 @@ class _SignupScreenState extends State<SignupScreen> {
   @override
   void dispose() {
     _username.dispose();
+    _email.dispose();
     _password.dispose();
     super.dispose();
   }
@@ -44,17 +50,28 @@ class _SignupScreenState extends State<SignupScreen> {
       _busy = true;
       _error = null;
       _usernameError = null;
+      _emailError = null;
       _suggestions = const [];
     });
     try {
-      await SessionScope.of(context).signup(
-        _username.text.trim(),
-        _password.text,
-      );
+      final email = _email.text.trim();
+      await SessionScope.of(context).api.signup(
+            _username.text.trim(),
+            email,
+            _password.text,
+          );
+      if (mounted) {
+        context.go('/verify-code', extra: VerifyCodeArgs.signup(email));
+      }
     } catch (error) {
       if (mounted) {
         setState(() {
-          if (error is ApiException && error.statusCode == 409) {
+          if (error is ApiException &&
+              (error.emailTaken || error.field == 'email')) {
+            _emailError = error.message;
+          } else if (error is ApiException && error.field == 'username') {
+            _usernameError = error.message;
+          } else if (error is ApiException && error.statusCode == 409) {
             _usernameError =
                 'That username is taken. Try one of these or add a number.';
             _suggestions = error.suggestions;
@@ -188,6 +205,51 @@ class _SignupScreenState extends State<SignupScreen> {
                             ],
                           ] else
                             const _Hint('At least 3 characters'),
+                          const SizedBox(height: FcSpace.s4),
+                          FcTextField(
+                            label: 'Email',
+                            controller: _email,
+                            hasError: _emailError != null,
+                            keyboardType: TextInputType.emailAddress,
+                            autofillHints: const [AutofillHints.email],
+                            textInputAction: TextInputAction.next,
+                            onChanged: (_) {
+                              if (_emailError != null) {
+                                setState(() => _emailError = null);
+                              }
+                            },
+                            describedBy: _emailError ??
+                                "We'll send a code to confirm it",
+                          ),
+                          const SizedBox(height: FcSpace.s2),
+                          if (_emailError != null)
+                            Semantics(
+                              liveRegion: true,
+                              child: Row(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Padding(
+                                    padding: const EdgeInsets.only(top: 2),
+                                    child: FcIcon(
+                                      FcIcons.warning,
+                                      size: 16,
+                                      color: c.danger,
+                                    ),
+                                  ),
+                                  const SizedBox(width: FcSpace.s2),
+                                  Expanded(
+                                    child: Text(
+                                      _emailError!,
+                                      style: FcText.label.copyWith(
+                                        color: c.danger,
+                                      ),
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            )
+                          else
+                            const _Hint("We'll send a code to confirm it"),
                           const SizedBox(height: FcSpace.s4),
                           FcTextField(
                             label: 'Password',

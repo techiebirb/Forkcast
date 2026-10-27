@@ -39,8 +39,7 @@ class FcCard extends StatelessWidget {
   }
 }
 
-/// Segmented control on a sunken pill track. Also used as the tab strip on
-/// the Saved screen.
+/// Segmented control on a sunken pill track.
 class FcSeg extends StatelessWidget {
   const FcSeg({
     super.key,
@@ -49,6 +48,7 @@ class FcSeg extends StatelessWidget {
     required this.onChanged,
     this.semanticLabel,
     this.optionLabels,
+    this.icons,
   });
 
   final List<String> options;
@@ -58,6 +58,9 @@ class FcSeg extends StatelessWidget {
 
   /// Spoken names for [options] when the visible text is short, like "½".
   final List<String>? optionLabels;
+
+  /// An icon before each label (the theme control). Makes options 48px tall.
+  final List<IconData>? icons;
 
   @override
   Widget build(BuildContext context) {
@@ -102,14 +105,34 @@ class FcSeg extends StatelessWidget {
         child: InkWell(
           customBorder: shape,
           onTap: () => onChanged(index),
+          // Unselected options darken to surface-pressed while held.
+          highlightColor: selected ? null : c.surfacePressed,
+          splashColor: Colors.transparent,
           child: ConstrainedBox(
-            constraints: const BoxConstraints(minHeight: kFcTargetMin),
+            constraints: BoxConstraints(
+              minHeight: icons == null ? kFcTargetMin : 48,
+            ),
             child: Center(
-              child: Text(
-                options[index],
-                style: FcText.label.copyWith(
-                  color: selected ? c.textPrimary : c.textSecondary,
-                ),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  if (icons != null) ...[
+                    FcIcon(
+                      icons![index],
+                      size: 20,
+                      color: selected ? c.accent : c.textSecondary,
+                    ),
+                    const SizedBox(width: FcSpace.s2),
+                  ],
+                  Flexible(
+                    child: Text(
+                      options[index],
+                      style: FcText.label.copyWith(
+                        color: selected ? c.textPrimary : c.textSecondary,
+                      ),
+                    ),
+                  ),
+                ],
               ),
             ),
           ),

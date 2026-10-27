@@ -9,6 +9,7 @@ class FcColors extends ThemeExtension<FcColors> {
     required this.surface,
     required this.surfaceRaised,
     required this.surfaceSunken,
+    required this.surfacePressed,
     required this.border,
     required this.borderStrong,
     required this.textPrimary,
@@ -42,6 +43,10 @@ class FcColors extends ThemeExtension<FcColors> {
   final Color surface;
   final Color surfaceRaised;
   final Color surfaceSunken;
+
+  /// Pressed fill for list rows, tab bar items and unselected segmented
+  /// options. Same value as [border].
+  final Color surfacePressed;
   final Color border;
   final Color borderStrong;
   final Color textPrimary;
@@ -84,6 +89,7 @@ class FcColors extends ThemeExtension<FcColors> {
     surface: Color(0xFFFCFBF8),
     surfaceRaised: Color(0xFFFEFDFB),
     surfaceSunken: Color(0xFFEEECE6),
+    surfacePressed: Color(0xFFE3E0D8),
     border: Color(0xFFE3E0D8),
     borderStrong: Color(0xFF8A857B),
     textPrimary: Color(0xFF1E1D1A),
@@ -128,6 +134,7 @@ class FcColors extends ThemeExtension<FcColors> {
     surface: Color(0xFF1C1B18),
     surfaceRaised: Color(0xFF252320),
     surfaceSunken: Color(0xFF110F0E),
+    surfacePressed: Color(0xFF34312C),
     border: Color(0xFF34312C),
     borderStrong: Color(0xFF77726A),
     textPrimary: Color(0xFFEDEBE6),
@@ -173,6 +180,7 @@ class FcColors extends ThemeExtension<FcColors> {
     Color? surface,
     Color? surfaceRaised,
     Color? surfaceSunken,
+    Color? surfacePressed,
     Color? border,
     Color? borderStrong,
     Color? textPrimary,
@@ -206,6 +214,7 @@ class FcColors extends ThemeExtension<FcColors> {
       surface: surface ?? this.surface,
       surfaceRaised: surfaceRaised ?? this.surfaceRaised,
       surfaceSunken: surfaceSunken ?? this.surfaceSunken,
+      surfacePressed: surfacePressed ?? this.surfacePressed,
       border: border ?? this.border,
       borderStrong: borderStrong ?? this.borderStrong,
       textPrimary: textPrimary ?? this.textPrimary,
@@ -247,6 +256,7 @@ class FcColors extends ThemeExtension<FcColors> {
       surface: mix(surface, other.surface),
       surfaceRaised: mix(surfaceRaised, other.surfaceRaised),
       surfaceSunken: mix(surfaceSunken, other.surfaceSunken),
+      surfacePressed: mix(surfacePressed, other.surfacePressed),
       border: mix(border, other.border),
       borderStrong: mix(borderStrong, other.borderStrong),
       textPrimary: mix(textPrimary, other.textPrimary),

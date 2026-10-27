@@ -5,48 +5,12 @@ import '../app.dart';
 import '../models.dart';
 import '../session.dart';
 import '../theme/fc_tokens.dart';
-import '../widgets/fc_button.dart';
 import '../widgets/fc_cards.dart';
 import '../widgets/fc_chips.dart';
 import '../widgets/fc_icons.dart';
 import '../widgets/fc_surfaces.dart';
 import '../widgets/fc_toggles.dart';
 import 'check_screen.dart';
-
-const _months = [
-  'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', //
-  'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec',
-];
-
-/// How long ago a history entry was checked: "just now", "5 min ago",
-/// "2 h ago", "Yesterday", "3 d ago", then a date like "Oct 18".
-String savedTimeLabel(DateTime? time, {DateTime? now}) {
-  if (time == null) {
-    return '';
-  }
-  final current = now ?? DateTime.now();
-  final local = time.toLocal();
-  final diff = current.difference(local);
-  if (diff.inMinutes < 1) {
-    return 'just now';
-  }
-  if (diff.inHours < 1) {
-    return '${diff.inMinutes} min ago';
-  }
-  if (diff.inHours < 24) {
-    return '${diff.inHours} h ago';
-  }
-  final today = DateTime(current.year, current.month, current.day);
-  final thatDay = DateTime(local.year, local.month, local.day);
-  final days = today.difference(thatDay).inDays;
-  if (days <= 1) {
-    return 'Yesterday';
-  }
-  if (days < 7) {
-    return '$days d ago';
-  }
-  return '${_months[local.month - 1]} ${local.day}';
-}
 
 class SavedScreen extends StatefulWidget {
   const SavedScreen({super.key});
@@ -56,7 +20,6 @@ class SavedScreen extends StatefulWidget {
 }
 
 class _SavedScreenState extends State<SavedScreen> {
-  int _tab = 0;
   bool _loading = true;
   bool _failed = false;
 
@@ -100,47 +63,13 @@ class _SavedScreenState extends State<SavedScreen> {
     context.push('/check-restaurant', extra: CheckRequest(restaurant));
   }
 
-  void _openHistory(HistoryEntry entry) {
-    SessionScope.of(context).openHistoryEntry(entry);
-    context.push('/check-restaurant');
-  }
-
-  Future<void> _confirmClear() async {
-    final session = SessionScope.of(context);
-    final confirmed = await showFcSheet<bool>(
-      context,
-      (sheetContext) => FcSheet(
-        title: 'Clear history?',
-        body: 'Your favorites will not be affected.',
-        actions: [
-          FcButton(
-            label: 'Cancel',
-            large: true,
-            variant: FcButtonVariant.secondary,
-            onPressed: () => Navigator.of(sheetContext).pop(false),
-          ),
-          FcButton(
-            label: 'Clear',
-            large: true,
-            variant: FcButtonVariant.destructive,
-            onPressed: () => Navigator.of(sheetContext).pop(true),
-          ),
-        ],
-      ),
-    );
-    if (confirmed == true) {
-      await _run(session.clearHistory);
-    }
-  }
-
   @override
   Widget build(BuildContext context) {
     final c = context.fc;
     final session = SessionScope.of(context);
     final saved = session.saved;
-    final nothingYet = saved.favoriteRestaurants.isEmpty &&
-        saved.favoriteMeals.isEmpty &&
-        saved.history.isEmpty;
+    final nothingYet =
+        saved.favoriteRestaurants.isEmpty && saved.favoriteMeals.isEmpty;
 
     final Widget content;
     if (_loading && nothingYet) {
@@ -155,50 +84,31 @@ class _SavedScreenState extends State<SavedScreen> {
           onAction: _refresh,
         ),
       );
+    } else if (nothingYet) {
+      content = ListState(
+        kind: ListStateKind.empty,
+        icon: FcIcons.bookmark,
+        title: 'Nothing saved yet',
+        body: 'Tap the bookmark on any restaurant.',
+        actionLabel: 'Search restaurants',
+        onAction: () => context.go('/'),
+      );
     } else {
-      content = _tab == 0
-          ? _favorites(c, session)
-          : _history(c, session);
+      content = _favorites(c, session);
     }
 
     return Scaffold(
       backgroundColor: c.bg,
       body: SafeArea(
+        bottom: false,
         child: Column(
           children: [
-            FcAppBar(
-              title: 'Saved',
-              backLabel: 'Back to Home',
-              actions: [
-                if (_tab == 1 && saved.history.isNotEmpty)
-                  FcButton(
-                    label: 'Clear history',
-                    variant: FcButtonVariant.ghost,
-                    iconOnly: true,
-                    icon: FcIcons.trash,
-                    onPressed: _confirmClear,
-                  ),
-              ],
-            ),
-            Padding(
-              padding: const EdgeInsets.fromLTRB(
-                FcSpace.s4,
-                FcSpace.s1,
-                FcSpace.s4,
-                0,
-              ),
-              child: FcSeg(
-                options: const ['Favorites', 'History'],
-                selectedIndex: _tab,
-                semanticLabel: 'Saved',
-                onChanged: (index) => setState(() => _tab = index),
-              ),
-            ),
+            const FcAppBar(title: 'Saved', showBack: false),
             Expanded(
               child: ListView(
                 padding: const EdgeInsets.fromLTRB(
                   FcSpace.s4,
-                  FcSpace.s6,
+                  FcSpace.s2,
                   FcSpace.s4,
                   FcSpace.s8,
                 ),
@@ -232,7 +142,8 @@ class _SavedScreenState extends State<SavedScreen> {
               shape: BoxShape.circle,
               color: c.surfaceSunken,
             ),
-            child: Center(child: FcIcon(icon, size: 20, color: c.textSecondary)),
+            child:
+                Center(child: FcIcon(icon, size: 20, color: c.textSecondary)),
           ),
           const SizedBox(width: FcSpace.s3),
           Expanded(
@@ -276,14 +187,15 @@ class _SavedScreenState extends State<SavedScreen> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        _heading(c, 'Restaurants', restaurants.isEmpty ? null : restaurants.length),
+        _heading(
+            c, 'Restaurants', restaurants.isEmpty ? null : restaurants.length),
         const SizedBox(height: FcSpace.s3),
         if (restaurants.isEmpty)
           _emptyCard(
             c,
-            FcIcons.star,
+            FcIcons.bookmark,
             'No restaurants saved yet',
-            'Star a restaurant from the search results to save it here.',
+            'Tap the bookmark on any restaurant.',
           )
         else
           for (var i = 0; i < restaurants.length; i++) ...[
@@ -326,110 +238,8 @@ class _SavedScreenState extends State<SavedScreen> {
             ),
           ],
         if (restaurants.isNotEmpty || meals.isNotEmpty)
-          _footnote(c, 'Newest first · up to 100 favorites'),
+          _footnote(c, 'Only what you bookmark · newest first · up to 100'),
       ],
-    );
-  }
-
-  Widget _history(FcColors c, SessionController session) {
-    final history = session.saved.history;
-    if (history.isEmpty) {
-      return const FcCard(
-        child: ListState(
-          kind: ListStateKind.empty,
-          icon: FcIcons.storefront,
-          title: 'No history yet',
-          body: 'Restaurants you check will show up here so you can reopen '
-              'them instantly.',
-        ),
-      );
-    }
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: [
-        FcCard(
-          clip: true,
-          child: Column(
-            children: [
-              for (var i = 0; i < history.length; i++) ...[
-                if (i > 0) Divider(color: c.border, height: 1, thickness: 1),
-                _HistoryRow(
-                  entry: history[i],
-                  when: savedTimeLabel(history[i].checkedAt),
-                  onTap: () => _openHistory(history[i]),
-                ),
-              ],
-            ],
-          ),
-        ),
-        _footnote(
-          c,
-          'Your 20 most recent checks. Opening one shows the saved results '
-          'right away.',
-        ),
-      ],
-    );
-  }
-}
-
-class _HistoryRow extends StatelessWidget {
-  const _HistoryRow({
-    required this.entry,
-    required this.when,
-    required this.onTap,
-  });
-
-  final HistoryEntry entry;
-  final String when;
-  final VoidCallback onTap;
-
-  @override
-  Widget build(BuildContext context) {
-    final c = context.fc;
-    final count = entry.menuItems.length;
-    final meta = [
-      '$count ${count == 1 ? 'item' : 'items'}',
-      if (when.isNotEmpty) when,
-    ].join(' · ');
-    return Semantics(
-      button: true,
-      label: '${entry.restaurant.name}, $meta',
-      excludeSemantics: true,
-      onTap: onTap,
-      child: InkWell(
-        onTap: onTap,
-        child: ConstrainedBox(
-          constraints: const BoxConstraints(minHeight: 64),
-          child: Padding(
-            padding: const EdgeInsets.fromLTRB(16, 10, 12, 10),
-            child: Row(
-              children: [
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        entry.restaurant.name,
-                        style: FcText.body.copyWith(
-                          fontWeight: FontWeight.w600,
-                          color: c.textPrimary,
-                        ),
-                      ),
-                      Text(
-                        meta,
-                        style: FcText.tabular(FcText.bodySm).copyWith(
-                          color: c.textSecondary,
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-                FcIcon(FcIcons.caretRight, size: 20, color: c.textSecondary),
-              ],
-            ),
-          ),
-        ),
-      ),
     );
   }
 }
@@ -488,7 +298,8 @@ class _MealCard extends StatelessWidget {
                   runSpacing: FcSpace.s1,
                   children: [
                     MacroChip(value: fcNum(item.calories), unit: 'cal'),
-                    MacroChip(value: '${fcNum(item.proteins)} g', unit: 'protein'),
+                    MacroChip(
+                        value: '${fcNum(item.proteins)} g', unit: 'protein'),
                     MacroChip(value: '${fcNum(item.carbs)} g', unit: 'carbs'),
                     MacroChip(value: '${fcNum(item.fat)} g', unit: 'fat'),
                   ],
@@ -514,7 +325,11 @@ class _MealCard extends StatelessWidget {
           Positioned(
             top: FcSpace.s1,
             right: FcSpace.s1,
-            child: BookmarkToggle(pressed: true, onPressed: onRemove),
+            child: BookmarkToggle(
+              pressed: true,
+              onPressed: onRemove,
+              name: item.name,
+            ),
           ),
         ],
       ),

@@ -45,6 +45,7 @@ class FcButton extends StatefulWidget {
     this.icon,
     this.iconOnly = false,
     this.loading = false,
+    this.readableWhenDisabled = false,
   });
 
   final String label;
@@ -55,6 +56,10 @@ class FcButton extends StatefulWidget {
   final IconData? icon;
   final bool iconOnly;
   final bool loading;
+
+  /// Keep a disabled label at text-secondary instead of text-disabled, for
+  /// disabled buttons whose words carry information (a countdown).
+  final bool readableWhenDisabled;
 
   @override
   State<FcButton> createState() => _FcButtonState();
@@ -77,7 +82,7 @@ class _FcButtonState extends State<FcButton> {
     BorderSide side = BorderSide.none;
     if (_disabled) {
       bg = v == FcButtonVariant.ghost ? Colors.transparent : c.surfaceSunken;
-      fg = c.textDisabled;
+      fg = widget.readableWhenDisabled ? c.textSecondary : c.textDisabled;
     } else {
       switch (v) {
         case FcButtonVariant.primary:

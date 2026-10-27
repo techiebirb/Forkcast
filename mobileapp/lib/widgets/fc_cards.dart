@@ -105,7 +105,8 @@ class PrefSummaryCard extends StatelessWidget {
           else
             Padding(
               padding: const EdgeInsets.only(right: FcSpace.s2),
-              child: Wrap(spacing: FcSpace.s1, runSpacing: FcSpace.s1, children: chips),
+              child: Wrap(
+                  spacing: FcSpace.s1, runSpacing: FcSpace.s1, children: chips),
             ),
         ],
       ),
@@ -368,7 +369,11 @@ class RestaurantCard extends StatelessWidget {
           Positioned(
             top: FcSpace.s1,
             right: FcSpace.s1,
-            child: FavoriteToggle(pressed: favorite, onPressed: onFavorite),
+            child: BookmarkToggle(
+              pressed: favorite,
+              onPressed: onFavorite,
+              name: r.name,
+            ),
           ),
         ],
       ),

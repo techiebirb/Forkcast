@@ -21,9 +21,9 @@
         {% endif %}
 
         <div class="fw-field">
-            <label for="login-user">Username</label>
+            <label for="login-user">Username or email</label>
             <div class="fa-input{% if bad_credentials %} is-error{% endif %}">
-                <input id="login-user" type="text" name="username" autocomplete="username" required
+                <input id="login-user" type="text" name="identifier" autocomplete="username" required
                     value="{{ username or '' }}"
                     {% if bad_credentials %}aria-invalid="true" aria-describedby="login-error"{% endif %}>
             </div>
@@ -37,6 +37,8 @@
                 <button type="button" class="fc-link" data-toggle-password="login-pass" aria-label="Show password">Show</button>
             </div>
         </div>
+
+        <p class="fw-auth__foot" style="margin: 0; text-align: left;"><a href="{{ url_for('forgot_password_page') }}">Forgot password?</a></p>
 
         <button class="fc-btn fc-btn--primary fc-btn--lg fc-btn--block" type="submit" style="margin-top: 8px;">
             <span class="fc-btn__label">Log in</span>

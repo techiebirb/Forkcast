@@ -122,7 +122,7 @@ class _LoginScreenState extends State<LoginScreen> {
                             const SizedBox(height: FcSpace.s4),
                           ],
                           FcTextField(
-                            label: 'Username',
+                            label: 'Username or email',
                             controller: _username,
                             hasError: _badCredentials,
                             autofillHints: const [AutofillHints.username],
@@ -142,7 +142,15 @@ class _LoginScreenState extends State<LoginScreen> {
                             onChanged: _clearError,
                             describedBy: _error,
                           ),
-                          const SizedBox(height: FcSpace.s6),
+                          Align(
+                            alignment: Alignment.centerLeft,
+                            child: FcButton(
+                              label: 'Forgot password?',
+                              variant: FcButtonVariant.ghost,
+                              onPressed: () => context.go('/forgot-password'),
+                            ),
+                          ),
+                          const SizedBox(height: FcSpace.s4),
                           FcButton(
                             label: 'Log in',
                             large: true,

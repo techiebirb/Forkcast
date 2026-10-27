@@ -1,13 +1,14 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:mobileapp/app_theme.dart';
-import 'package:mobileapp/screens/saved_screen.dart';
+import 'package:mobileapp/screens/history_screen.dart';
 import 'package:mobileapp/widgets/fc_button.dart';
 import 'package:mobileapp/widgets/fc_chips.dart';
 import 'package:mobileapp/widgets/fc_form.dart';
 import 'package:mobileapp/widgets/fc_icons.dart';
 import 'package:mobileapp/widgets/fc_logo.dart';
 import 'package:mobileapp/widgets/fc_surfaces.dart';
+import 'package:mobileapp/widgets/fc_tab_bar.dart';
 import 'package:mobileapp/widgets/fc_toggles.dart';
 
 Widget _gallery() {
@@ -63,7 +64,8 @@ Widget _gallery() {
         spacing: 8,
         runSpacing: 8,
         children: [
-          FcFilterChip(label: 'Peanuts', icon: FcIcons.acorn, onSelected: (_) {}),
+          FcFilterChip(
+              label: 'Peanuts', icon: FcIcons.acorn, onSelected: (_) {}),
           FcFilterChip(label: 'Shellfish', selected: true, onSelected: (_) {}),
           const DietTag(label: 'Halal'),
           const DietTag(label: 'No peanuts', kind: DietTagKind.allergy),
@@ -96,7 +98,7 @@ Widget _gallery() {
         child: Row(
           children: [
             const Expanded(child: Text('Saffron & Salt')),
-            FavoriteToggle(pressed: true, onPressed: () {}),
+            BookmarkToggle(pressed: true, onPressed: () {}),
             BookmarkToggle(pressed: false, onPressed: () {}),
           ],
         ),
@@ -133,7 +135,8 @@ Widget _gallery() {
 
 void main() {
   for (final dark in [false, true]) {
-    testWidgets('widget gallery renders without errors (${dark ? 'dark' : 'light'})',
+    testWidgets(
+        'widget gallery renders without errors (${dark ? 'dark' : 'light'})',
         (tester) async {
       tester.view.physicalSize = const Size(390 * 3, 3000 * 3);
       tester.view.devicePixelRatio = 3;
@@ -168,11 +171,71 @@ void main() {
         '2 h ago');
     // 2 hours ago but across midnight is still "2 h ago", not "Yesterday".
     final early = DateTime(2026, 10, 25, 1, 0);
-    expect(savedTimeLabel(DateTime(2026, 10, 24, 23, 0), now: early),
-        '2 h ago');
+    expect(
+        savedTimeLabel(DateTime(2026, 10, 24, 23, 0), now: early), '2 h ago');
     expect(savedTimeLabel(DateTime(2026, 10, 24, 9, 0), now: now), 'Yesterday');
-    expect(savedTimeLabel(DateTime(2026, 10, 22, 9, 0), now: now), '3 d ago');
+    expect(
+        savedTimeLabel(DateTime(2026, 10, 22, 9, 0), now: now), '3 days ago');
     expect(savedTimeLabel(DateTime(2026, 10, 12, 9, 0), now: now), 'Oct 12');
     expect(savedTimeLabel(null, now: now), '');
+  });
+
+  test('history entries group by day', () {
+    final now = DateTime(2026, 10, 25, 12, 0);
+    expect(historyGroupLabel(DateTime(2026, 10, 25, 8, 0), now: now), 'Today');
+    expect(historyGroupLabel(DateTime(2026, 10, 24, 23, 0), now: now),
+        'Yesterday');
+    expect(historyGroupLabel(DateTime(2026, 10, 22, 9, 0), now: now),
+        'Earlier this week');
+    expect(
+        historyGroupLabel(DateTime(2026, 10, 12, 9, 0), now: now), 'Earlier');
+    expect(historyGroupLabel(null, now: now), 'Earlier');
+  });
+
+  testWidgets('tab bar shows four labelled tabs and reports taps',
+      (tester) async {
+    FcTab? tapped;
+    for (final theme in [buildLightTheme(), buildDarkTheme()]) {
+      tapped = null;
+      await tester.pumpWidget(
+        MaterialApp(
+          theme: theme,
+          home: Scaffold(
+            bottomNavigationBar: FcTabBar(
+              current: FcTab.saved,
+              onSelect: (tab) => tapped = tab,
+            ),
+          ),
+        ),
+      );
+      for (final label in ['Home', 'Saved', 'History', 'Settings']) {
+        expect(find.text(label), findsOneWidget);
+      }
+      await tester.tap(find.text('History'));
+      expect(tapped, FcTab.history);
+      expect(tester.takeException(), isNull);
+    }
+  });
+
+  testWidgets('theme control with icons renders in both themes',
+      (tester) async {
+    for (final theme in [buildLightTheme(), buildDarkTheme()]) {
+      var picked = -1;
+      await tester.pumpWidget(
+        MaterialApp(
+          theme: theme,
+          home: Scaffold(
+            body: FcSeg(
+              options: const ['System', 'Light', 'Dark'],
+              icons: const [FcIcons.circleHalf, FcIcons.sun, FcIcons.moon],
+              selectedIndex: 0,
+              onChanged: (index) => picked = index,
+            ),
+          ),
+        ),
+      );
+      await tester.tap(find.text('Dark'));
+      expect(picked, 2);
+    }
   });
 }

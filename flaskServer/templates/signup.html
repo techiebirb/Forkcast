@@ -12,7 +12,7 @@
     </div>
 
     <form class="fw-auth__form" method="post" action="{{ url_for('api_signup') }}" aria-label="Create an account">
-        {% if error and not taken %}
+        {% if error and not taken and not email_error %}
         <div class="fw-alert" role="alert">
             <i class="ph ph-warning" style="font-size: 20px" aria-hidden="true"></i>
             <p><strong>{{ error }}</strong></p>
@@ -45,6 +45,20 @@
                 <span>At least 3 characters</span>
             </p>
             {% endif %}
+        </div>
+
+        <div class="fw-field">
+            <label for="su-email">Email</label>
+            <div class="fa-input{% if email_error %} is-error{% endif %}">
+                <input id="su-email" type="email" name="email" autocomplete="email" required
+                    value="{{ email or '' }}"
+                    aria-describedby="su-email-note"
+                    {% if email_error %}aria-invalid="true"{% endif %}>
+            </div>
+            <p class="{{ 'fw-error-text' if email_error else 'fc-field__hint' }}" id="su-email-note">
+                <i class="ph {{ 'ph-warning' if email_error else 'ph-info fc-icon' }}" style="font-size: 16px" aria-hidden="true"></i>
+                <span>{{ error if email_error else "We'll send a code to confirm it" }}</span>
+            </p>
         </div>
 
         <div class="fw-field">

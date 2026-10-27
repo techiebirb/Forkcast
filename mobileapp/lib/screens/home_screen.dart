@@ -175,37 +175,6 @@ class _HomeScreenState extends State<HomeScreen> {
     context.push('/pick-restaurant');
   }
 
-  Future<void> _openAccount() async {
-    final session = SessionScope.of(context);
-    final name = session.username;
-    final confirmed = await showFcSheet<bool>(
-      context,
-      (sheetContext) => FcSheet(
-        title: 'Account',
-        body: name == null || name.isEmpty
-            ? 'You are signed in.'
-            : 'Signed in as $name.',
-        actions: [
-          FcButton(
-            label: 'Cancel',
-            large: true,
-            variant: FcButtonVariant.secondary,
-            onPressed: () => Navigator.of(sheetContext).pop(false),
-          ),
-          FcButton(
-            label: 'Log out',
-            large: true,
-            variant: FcButtonVariant.destructive,
-            onPressed: () => Navigator.of(sheetContext).pop(true),
-          ),
-        ],
-      ),
-    );
-    if (confirmed == true) {
-      await session.logout();
-    }
-  }
-
   void _toggleAllergy(String key, bool selected) {
     setState(() {
       if (selected) {
@@ -243,9 +212,8 @@ class _HomeScreenState extends State<HomeScreen> {
     if (protein != null) {
       parts.add('${fcNum(protein)} g protein');
     }
-    final others = [_carbs, _fat, _fiber, _sugar]
-        .where((c) => _parse(c) != null)
-        .length;
+    final others =
+        [_carbs, _fat, _fiber, _sugar].where((c) => _parse(c) != null).length;
     if (others > 0) {
       parts.add('+$others ${others == 1 ? 'target' : 'targets'}');
     }
@@ -273,25 +241,9 @@ class _HomeScreenState extends State<HomeScreen> {
       body: SafeArea(
         child: Column(
           children: [
-            FcAppBar(
+            const FcAppBar(
               showBack: false,
-              titleWidget: const FcWordmark(),
-              actions: [
-                FcButton(
-                  label: 'Saved',
-                  variant: FcButtonVariant.ghost,
-                  iconOnly: true,
-                  icon: FcIcons.bookmark,
-                  onPressed: () => context.push('/saved'),
-                ),
-                FcButton(
-                  label: 'Account and log out',
-                  variant: FcButtonVariant.ghost,
-                  iconOnly: true,
-                  icon: FcIcons.user,
-                  onPressed: _openAccount,
-                ),
-              ],
+              titleWidget: FcWordmark(),
             ),
             Expanded(
               child: ListView(
@@ -572,8 +524,7 @@ class _HomeScreenState extends State<HomeScreen> {
                       border: InputBorder.none,
                       enabledBorder: InputBorder.none,
                       focusedBorder: InputBorder.none,
-                      contentPadding:
-                          const EdgeInsets.symmetric(vertical: 12),
+                      contentPadding: const EdgeInsets.symmetric(vertical: 12),
                       hintText: 'Add another, like sesame',
                       hintStyle: FcText.body.copyWith(color: c.textSecondary),
                     ),

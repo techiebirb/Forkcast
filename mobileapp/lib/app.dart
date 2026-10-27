@@ -3,15 +3,21 @@ import 'package:go_router/go_router.dart';
 
 import 'api_client.dart';
 import 'app_theme.dart';
+import 'screens/add_email_screen.dart';
 import 'screens/check_screen.dart';
+import 'screens/forgot_password_screen.dart';
+import 'screens/verify_code_screen.dart';
+import 'screens/history_screen.dart';
 import 'screens/home_screen.dart';
 import 'screens/login_screen.dart';
 import 'screens/map_pick_screen.dart';
 import 'screens/saved_screen.dart';
 import 'screens/search_screen.dart';
+import 'screens/settings_screen.dart';
 import 'screens/signup_screen.dart';
 import 'screens/startup_screen.dart';
 import 'session.dart';
+import 'widgets/fc_tab_bar.dart';
 import 'widgets/waking_banner.dart';
 
 class SessionScope extends InheritedNotifier<SessionController> {
@@ -40,12 +46,20 @@ GoRouter createRouter(SessionController session) {
       if (starting) {
         return session.authenticated ? '/' : '/login';
       }
-      final loggingIn = state.matchedLocation == '/login' ||
-          state.matchedLocation == '/signup';
-      if (!session.authenticated && !loggingIn) {
+      final location = state.matchedLocation;
+      final loggingIn = location == '/login' ||
+          location == '/signup' ||
+          location == '/forgot-password';
+      final verifying = location == '/verify-code';
+      // Older accounts must add an email before anything else.
+      if (session.authenticated && session.needsEmail) {
+        return location == '/add-email' || verifying ? null : '/add-email';
+      }
+      if (!session.authenticated && !loggingIn && !verifying) {
         return '/login';
       }
-      if (session.authenticated && loggingIn) {
+      if (session.authenticated &&
+          (loggingIn || verifying || location == '/add-email')) {
         return '/';
       }
       return null;
@@ -64,8 +78,45 @@ GoRouter createRouter(SessionController session) {
         builder: (context, state) => const SignupScreen(),
       ),
       GoRoute(
-        path: '/',
-        builder: (context, state) => const HomeScreen(),
+        path: '/forgot-password',
+        builder: (context, state) => const ForgotPasswordScreen(),
+      ),
+      GoRoute(
+        path: '/verify-code',
+        builder: (context, state) {
+          final args = state.extra;
+          // A lost `extra` (e.g. a browser refresh) has nothing to verify.
+          return args is VerifyCodeArgs
+              ? VerifyCodeScreen(args: args)
+              : const LoginScreen();
+        },
+      ),
+      GoRoute(
+        path: '/add-email',
+        builder: (context, state) => const AddEmailScreen(),
+      ),
+      // The four main screens share the tab bar.
+      ShellRoute(
+        builder: (context, state, child) =>
+            AppShell(location: state.matchedLocation, child: child),
+        routes: [
+          GoRoute(
+            path: '/',
+            builder: (context, state) => const HomeScreen(),
+          ),
+          GoRoute(
+            path: '/saved',
+            builder: (context, state) => const SavedScreen(),
+          ),
+          GoRoute(
+            path: '/history',
+            builder: (context, state) => const HistoryScreen(),
+          ),
+          GoRoute(
+            path: '/settings',
+            builder: (context, state) => const SettingsScreen(),
+          ),
+        ],
       ),
       GoRoute(
         path: '/search-restaurants',
@@ -78,14 +129,9 @@ GoRouter createRouter(SessionController session) {
       GoRoute(
         path: '/check-restaurant',
         builder: (context, state) => CheckScreen(
-          request: state.extra is CheckRequest
-              ? state.extra as CheckRequest
-              : null,
+          request:
+              state.extra is CheckRequest ? state.extra as CheckRequest : null,
         ),
-      ),
-      GoRoute(
-        path: '/saved',
-        builder: (context, state) => const SavedScreen(),
       ),
     ],
   );
@@ -128,23 +174,26 @@ class _MenuAppState extends State<MenuApp> with WidgetsBindingObserver {
   Widget build(BuildContext context) {
     return SessionScope(
       controller: widget.session,
-      child: MaterialApp.router(
-        title: 'Forkcast',
-        theme: buildLightTheme(),
-        darkTheme: buildDarkTheme(),
-        themeMode: ThemeMode.system,
-        routerConfig: _router,
-        // The waking banner shows mid-session only; the startup screen covers
-        // the launch case, so it stays hidden until the session is ready.
-        builder: (context, child) => ListenableBuilder(
-          listenable: widget.session,
-          builder: (context, _) => ValueListenableBuilder<bool>(
-            valueListenable: widget.session.api.serverWaking,
-            builder: (context, waking, _) => WakingBannerHost(
-              show: waking &&
-                  widget.session.ready &&
-                  widget.session.startupError == null,
-              child: child ?? const SizedBox.shrink(),
+      child: ListenableBuilder(
+        listenable: widget.session,
+        builder: (context, _) => MaterialApp.router(
+          title: 'Forkcast',
+          theme: buildLightTheme(),
+          darkTheme: buildDarkTheme(),
+          themeMode: widget.session.themeMode,
+          routerConfig: _router,
+          // The waking banner shows mid-session only; the startup screen covers
+          // the launch case, so it stays hidden until the session is ready.
+          builder: (context, child) => ListenableBuilder(
+            listenable: widget.session,
+            builder: (context, _) => ValueListenableBuilder<bool>(
+              valueListenable: widget.session.api.serverWaking,
+              builder: (context, waking, _) => WakingBannerHost(
+                show: waking &&
+                    widget.session.ready &&
+                    widget.session.startupError == null,
+                child: child ?? const SizedBox.shrink(),
+              ),
             ),
           ),
         ),

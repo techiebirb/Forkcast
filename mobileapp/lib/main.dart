@@ -9,6 +9,7 @@ Future<void> main() async {
   final api = ApiClient();
   await api.init();
   final session = SessionController(api);
+  await session.loadThemeMode();
   runApp(MenuApp(session: session));
   session.bootstrap();
 }

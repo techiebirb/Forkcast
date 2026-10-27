@@ -28,6 +28,13 @@ abstract final class FcIcons {
   static const slidersHorizontal = IconData(0xe434, fontFamily: 'Phosphor');
   static const caretDown = IconData(0xe136, fontFamily: 'Phosphor');
   static const clock = IconData(0xe19a, fontFamily: 'Phosphor');
+  static const house = IconData(0xe2c2, fontFamily: 'Phosphor');
+  static const gear = IconData(0xe270, fontFamily: 'Phosphor');
+  static const sun = IconData(0xe472, fontFamily: 'Phosphor');
+  static const moon = IconData(0xe330, fontFamily: 'Phosphor');
+  static const circleHalf = IconData(0xe18c, fontFamily: 'Phosphor');
+  static const clockCounterClockwise = IconData(0xe1a0, fontFamily: 'Phosphor');
+  static const arrowClockwise = IconData(0xe036, fontFamily: 'Phosphor');
 
   // Allergen glyphs.
   static const acorn = IconData(0xeb9a, fontFamily: 'Phosphor');
@@ -37,9 +44,7 @@ abstract final class FcIcons {
   static const cheese = IconData(0xe9fe, fontFamily: 'Phosphor');
   static const bread = IconData(0xe81c, fontFamily: 'Phosphor');
 
-  // Toggles come in an outline and a filled form.
-  static const star = IconData(0xe46a, fontFamily: 'Phosphor');
-  static const starFilled = IconData(0xe46a, fontFamily: 'PhosphorFill');
+  // Bookmark comes in an outline and a filled form (the star was retired).
   static const bookmark = IconData(0xe0ea, fontFamily: 'Phosphor');
   static const bookmarkFilled = IconData(0xe0ea, fontFamily: 'PhosphorFill');
 }

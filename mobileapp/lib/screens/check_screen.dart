@@ -13,6 +13,7 @@ import '../widgets/fc_icons.dart';
 import '../widgets/fc_surfaces.dart';
 import '../widgets/fc_toggles.dart';
 import '../widgets/food_item_card.dart';
+import 'history_screen.dart' show savedTimeLabel;
 
 /// Pass as the route `extra` to make the Check screen load a fresh menu for
 /// [restaurant]. Without it the screen shows the menu already in the session
@@ -36,6 +37,7 @@ class CheckScreen extends StatefulWidget {
 
 class _CheckScreenState extends State<CheckScreen> {
   _CheckPhase _phase = _CheckPhase.loading;
+  CheckRequest? _request;
 
   bool _started = false;
 
@@ -49,6 +51,7 @@ class _CheckScreenState extends State<CheckScreen> {
     }
     _started = true;
     final request = widget.request;
+    _request = request;
     if (request == null) {
       final empty = SessionScope.of(context).menuItems.isEmpty;
       _phase = empty ? _CheckPhase.noMenu : _CheckPhase.results;
@@ -146,7 +149,8 @@ class _CheckScreenState extends State<CheckScreen> {
     );
   }
 
-  Widget _header(FcColors c, SessionController session, RestaurantRecommendation r) {
+  Widget _header(
+      FcColors c, SessionController session, RestaurantRecommendation r) {
     final hasName = r.name.isNotEmpty;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -163,7 +167,8 @@ class _CheckScreenState extends State<CheckScreen> {
               ),
             ),
             if (hasName)
-              FavoriteToggle(
+              BookmarkToggle(
+                name: r.name,
                 pressed: session.isFavoriteRestaurant(r.name),
                 onPressed: () => _guarded(
                   () => session.toggleFavoriteRestaurant(r),
@@ -246,10 +251,8 @@ class _CheckScreenState extends State<CheckScreen> {
               title: "Couldn't check this menu",
               body: 'Check your connection and try again. The quick links '
                   'above still work.',
-              actionLabel: widget.request == null ? null : 'Try again',
-              onAction: widget.request == null
-                  ? null
-                  : () => _load(widget.request!),
+              actionLabel: _request == null ? null : 'Try again',
+              onAction: _request == null ? null : () => _load(_request!),
             ),
           ),
         ];
@@ -284,7 +287,19 @@ class _CheckScreenState extends State<CheckScreen> {
       ('Fits with a swap', MatchStatus.swap),
       ("Doesn't fit", MatchStatus.no),
     ];
+    final reopened = _request == null ? session.reopenedFrom : null;
     return [
+      if (reopened != null) ...[
+        _FromHistoryBanner(
+          when: savedTimeLabel(reopened.checkedAt),
+          onCheckAgain: () {
+            final request = CheckRequest(reopened.restaurant);
+            _request = request;
+            _load(request);
+          },
+        ),
+        const SizedBox(height: 20),
+      ],
       PrefSummaryCard(
         preferences: session.preferences,
         title: 'Checking against',
@@ -354,5 +369,76 @@ class _CheckScreenState extends State<CheckScreen> {
         const SizedBox(height: FcSpace.s3),
       ],
     ];
+  }
+}
+
+/// Shown on a check reopened from History: when it happened, and a way to
+/// run it again.
+class _FromHistoryBanner extends StatelessWidget {
+  const _FromHistoryBanner({required this.when, required this.onCheckAgain});
+
+  final String when;
+  final VoidCallback onCheckAgain;
+
+  @override
+  Widget build(BuildContext context) {
+    final c = context.fc;
+    final style = FcText.bodySm.copyWith(color: c.textSecondary);
+    return Container(
+      padding: const EdgeInsets.symmetric(
+        horizontal: FcSpace.s4,
+        vertical: FcSpace.s3,
+      ),
+      decoration: BoxDecoration(
+        color: c.surfaceSunken,
+        borderRadius: BorderRadius.circular(FcRadius.card),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Semantics(
+            liveRegion: true,
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                FcIcon(
+                  FcIcons.clockCounterClockwise,
+                  size: 20,
+                  color: c.textPrimary,
+                ),
+                const SizedBox(width: FcSpace.s2),
+                Expanded(
+                  child: Text.rich(
+                    TextSpan(
+                      style: style,
+                      children: [
+                        TextSpan(
+                          text: 'From your history. ',
+                          style: style.copyWith(
+                            fontWeight: FontWeight.w600,
+                            color: c.textPrimary,
+                          ),
+                        ),
+                        TextSpan(
+                          text: '${when.isEmpty ? '' : 'Checked $when. '}'
+                              'The menu or your preferences may have changed.',
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(height: FcSpace.s3),
+          FcButton(
+            label: 'Check again',
+            variant: FcButtonVariant.secondary,
+            icon: FcIcons.arrowClockwise,
+            onPressed: onCheckAgain,
+          ),
+        ],
+      ),
+    );
   }
 }
