@@ -34,13 +34,16 @@ load_dotenv()
 MODEL_NAMES = tuple(
     name.strip()
     for name in os.environ.get(
-        "GEMINI_MODELS", "gemini-3.5-flash-lite,gemini-3.1-flash-lite"
+        "GEMINI_MODELS", "gemini-3.5-flash-lite,gemini-3.1-flash-lite,gemini-3.5-flash"
     ).split(",")
     if name.strip()
 )
 GEMINI_TIMEOUT_MS = 45_000
 GEMINI_BUDGET_SECONDS = 100
-GEMINI_ATTEMPTS_PER_MODEL = 2
+GEMINI_ATTEMPTS_PER_MODEL = 3
+GEMINI_BACKOFF_SECONDS = (1.5, 4.0)  # before attempts 2 and 3 of a model
+GEMINI_FINAL_PASS_WAIT = 5
+TRANSIENT_GEMINI_CODES = (429, 500, 503, 504)
 TOOLS_COOLDOWN_SECONDS = 600
 MONGO_URI = os.environ.get("MONGO_URI", "").strip()
 IS_PRODUCTION = os.environ.get("APP_ENV", "").lower() == "production"
@@ -1333,8 +1336,14 @@ def generate_structured(
     global _tools_disabled_until
     deadline = time.monotonic() + GEMINI_BUDGET_SECONDS
     last_error: Optional[Exception] = None
-    for model in MODEL_NAMES:
-        for attempt in range(GEMINI_ATTEMPTS_PER_MODEL):
+    # After every model has failed, wait out the spike once and retry the first.
+    for index, model in enumerate((*MODEL_NAMES, MODEL_NAMES[0])):
+        final_pass = index == len(MODEL_NAMES)
+        if final_pass:
+            if time.monotonic() + GEMINI_FINAL_PASS_WAIT >= deadline:
+                break
+            time.sleep(GEMINI_FINAL_PASS_WAIT)
+        for attempt in range(1 if final_pass else GEMINI_ATTEMPTS_PER_MODEL):
             if time.monotonic() >= deadline:
                 break
             with_tools = bool(tools) and time.monotonic() >= _tools_disabled_until
@@ -1367,14 +1376,17 @@ def generate_structured(
                 if kind in ("quota", "no-model"):
                     break
                 if kind == "transient" and attempt + 1 < GEMINI_ATTEMPTS_PER_MODEL:
-                    time.sleep((1.0, 2.5)[attempt] + random.random() * 0.5)
+                    pause = GEMINI_BACKOFF_SECONDS[attempt] + random.random()
+                    if time.monotonic() + pause >= deadline:
+                        break
+                    time.sleep(pause)
     if last_error is None:
         raise RuntimeError("Gemini request ran out of time.")
     raise last_error
 
 
 def gemini_error_message(exc: Exception, fallback: str) -> str:
-    if getattr(exc, "code", None) in (429, 500, 503, 504):
+    if getattr(exc, "code", None) in TRANSIENT_GEMINI_CODES:
         return "Gemini is busy right now. Please try again in a few seconds."
     return fallback
 
@@ -1556,20 +1568,14 @@ def search_nearby_ranked(
     if not candidates:
         return []
     by_id = {place["place_id"]: place for place in candidates}
-    picks = rank_candidates_with_gemini(preferences, candidates)
-    scored = []
-    seen = set()
-    for pick in picks:
-        place = by_id.get(pick.place_id)
-        if place is None or pick.place_id in seen:
-            continue
-        seen.add(pick.place_id)
-        data = {
+
+    def _entry(place: dict, why: str, ideas: list) -> dict:
+        return {
             "name": place["name"],
             "address": place["address"],
             "cuisine": place.get("cuisine", ""),
-            "why_it_matches": pick.why_it_matches,
-            "possible_ideas": pick.possible_ideas,
+            "why_it_matches": why,
+            "possible_ideas": ideas,
             "website": place["website"],
             "place_id": place["place_id"],
             "maps_url": place["maps_url"],
@@ -1580,6 +1586,31 @@ def search_nearby_ranked(
             "walk_minutes": place.get("walk_minutes"),
             "open_now": place.get("open_now"),
         }
+
+    try:
+        picks = rank_candidates_with_gemini(preferences, candidates)
+    except Exception as exc:
+        if getattr(exc, "code", None) not in TRANSIENT_GEMINI_CODES:
+            raise
+        # Gemini is overloaded; the Places results are still good, so show them
+        # nearest first without the AI blurbs rather than failing the search.
+        logger.warning("Gemini ranking unavailable (%s); returning unranked results", exc)
+        nearest = sorted(
+            candidates,
+            key=lambda p: (
+                p.get("distance_miles") if p.get("distance_miles") is not None else 999,
+                -(p.get("rating") or 0),
+            ),
+        )
+        return [_entry(place, "", []) for place in nearest[:MAX_RESULTS]]
+    scored = []
+    seen = set()
+    for pick in picks:
+        place = by_id.get(pick.place_id)
+        if place is None or pick.place_id in seen:
+            continue
+        seen.add(pick.place_id)
+        data = _entry(place, pick.why_it_matches, pick.possible_ideas)
         score = pick.fit_score - DISTANCE_PENALTY_PER_MILE * (place.get("distance_miles") or 0)
         scored.append((score, data))
     scored.sort(key=lambda pair: pair[0], reverse=True)
@@ -2141,7 +2172,10 @@ def search_restaurants():
             error = str(exc)
             restaurants = []
         except Exception as exc:
-            logger.exception("Could not search restaurants")
+            if getattr(exc, "code", None) in TRANSIENT_GEMINI_CODES:
+                logger.warning("Could not search restaurants: %s", exc)
+            else:
+                logger.exception("Could not search restaurants")
             error = gemini_error_message(exc, "Could not search restaurants.")
             restaurants = []
 
@@ -2247,7 +2281,10 @@ def check_restaurant():
                 menu_items = [item.model_dump() for item in found]
                 _update_user({"last_menu_items": menu_items})
             except Exception as exc:
-                logger.exception("Could not check that restaurant")
+                if getattr(exc, "code", None) in TRANSIENT_GEMINI_CODES:
+                    logger.warning("Could not check that restaurant: %s", exc)
+                else:
+                    logger.exception("Could not check that restaurant")
                 error = gemini_error_message(exc, "Could not check that restaurant.")
                 menu_items = []
             restaurants = load_restaurants()
