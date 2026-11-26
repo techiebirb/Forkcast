@@ -6,6 +6,11 @@ Forkcast is a nutrition-aware restaurant finder. You tell it your macro targets,
 
 Forkcast was built for the Congressional App Challenge. The story behind it is in [Congressional App Question Answers](<Congressional App Question Answers.md>).
 
+<p align="center">
+ <img src="https://github.com/techiebirb/Forkcast/blob/main/Forkcast.png" alt="Forkcast sample image" width="400" />
+</p>
+
+
 ## Try it
 
 **Download the latest release: https://github.com/techiebirb/Forkcast/releases/latest**
